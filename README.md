@@ -85,5 +85,4 @@
 不确定就用 universal APK）。Go 核心会在构建时自动编译并校验 ABI，无需手工执行 gomobile。
 需要真机才能跑的测试用 `./gradlew connectedDebugAndroidTest`。
 
-开发规范、安全边界与发布流程见 [AGENTS.md](AGENTS.md)；第三方组件许可见
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+开发规范、安全边界与发布流程见 [AGENTS.md](AGENTS.md)
