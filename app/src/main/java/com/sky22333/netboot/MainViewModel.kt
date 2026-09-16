@@ -17,6 +17,7 @@ import com.sky22333.netboot.data.IsoLanguage
 import com.sky22333.netboot.data.IsoRepository
 import com.sky22333.netboot.data.IsoRequest
 import com.sky22333.netboot.data.PxeFileRepository
+import com.sky22333.netboot.data.isBootFileUsable
 import com.sky22333.netboot.data.SettingsRepository
 import com.sky22333.netboot.data.WindowsVersion
 import com.sky22333.netboot.data.RuntimeEventEntity
@@ -132,8 +133,7 @@ class MainViewModel @Inject constructor(
         dhcpPoolEnd: String,
     ) {
         require(port in 1024..65535) { "invalid_http_port" }
-        require(bootFile.isNotBlank()) { "invalid_boot_file" }
-        require(pxeFiles.value.any { it.name == bootFile }) { "boot_file_not_imported" }
+        require(isBootFileUsable(bootFile, pxeFiles.value)) { "boot_file_not_imported" }
         require(ipxeScript.startsWith("#!ipxe")) { "invalid_ipxe_script" }
         require(interfaces().any { it.name == adapter.name && it.address == adapter.address }) { "network_interface_changed" }
         if (mode == BootMode.Dhcp) {

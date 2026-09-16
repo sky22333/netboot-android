@@ -93,7 +93,7 @@ func parseTFTPRequest(packet []byte) (tftpRequest, error) {
 func serveTFTPFile(ctx context.Context, cfg config, sink *eventSink, client net.Addr, request tftpRequest) {
 	var reader io.ReadCloser
 	var size int64
-	if request.name == "boot.ipxe" {
+	if isScriptName(request.name) {
 		reader = io.NopCloser(strings.NewReader(cfg.IPXEScript))
 		size = int64(len(cfg.IPXEScript))
 	} else {

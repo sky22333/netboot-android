@@ -118,14 +118,21 @@ func serveDHCP(ctx context.Context, conn net.PacketConn, cfg config, pool *lease
 		_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		if _, err = conn.WriteTo(response, target); err == nil {
 			options := parseDHCPOptions(request[240:])
+			architecture := clientArchitecture(options)
+			bootFile := bootFileFor(options, cfg)
 			sink.emit("info", "dhcp", "dhcp_response", map[string]string{
-				"architecture": clientArchitecture(options),
-				"bootFile":     bootFileFor(options, cfg),
+				"architecture": architecture,
+				"bootFile":     bootFile,
 				"client":       macString(request),
 				"message":      strconv.Itoa(int(first(options[53]))),
 				"port":         port,
 				"remote":       remote.String(),
 			})
+			if bootFile == "" {
+				sink.emit("warning", "dhcp", "boot_file_unsupported", map[string]string{
+					"architecture": architecture, "client": macString(request),
+				})
+			}
 		} else {
 			sink.emit("warning", "dhcp", "dhcp_response_failed", map[string]string{
 				"client": macString(request), "port": port,
@@ -278,19 +285,30 @@ func appendOption(packet []byte, code byte, value []byte) []byte {
 	return append(packet, value...)
 }
 
+// bootFileFor resolves the first-stage boot file: an explicit cfg.BootFile wins, otherwise it
+// follows the client architecture. An empty result means no image is bundled for that client.
 func bootFileFor(options map[byte][]byte, cfg config) string {
 	if len(options[175]) > 0 || strings.Contains(strings.ToLower(string(options[77])), "ipxe") {
 		return "http://" + net.JoinHostPort(cfg.AdvertiseIP, strconv.Itoa(cfg.HTTPPort)) + "/boot.ipxe"
 	}
-	if len(options[93]) >= 2 {
-		switch binary.BigEndian.Uint16(options[93][:2]) {
-		case 0:
-			return "undionly.kpxe"
-		case 11:
-			return "ipxe-arm64.efi"
-		}
+	if cfg.BootFile != "" {
+		return cfg.BootFile
 	}
-	return cfg.BootFile
+	return bundledBootFile(clientArchitecture(options))
+}
+
+// bundledBootFile maps a client architecture to the image bundled for it; empty means none.
+func bundledBootFile(architecture string) string {
+	switch architecture {
+	case "bios":
+		return "undionly.kpxe"
+	case "efi64":
+		return "ipxe-x86_64.efi"
+	case "arm64":
+		return "ipxe-arm64.efi"
+	default:
+		return ""
+	}
 }
 
 func macString(packet []byte) string {

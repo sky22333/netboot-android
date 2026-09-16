@@ -37,3 +37,16 @@ func TestBlockSizeBounds(t *testing.T) {
 		t.Fatal("block size was not bounded")
 	}
 }
+
+func TestScriptNamesResolveToTheConfiguredScript(t *testing.T) {
+	for _, name := range []string{"autoexec.ipxe", "boot.ipxe"} {
+		if !isScriptName(name) {
+			t.Fatalf("%q must be answered with the configured script", name)
+		}
+	}
+	for _, name := range []string{"ipxe-x86_64.efi", "Autoexec.ipxe", "autoexec.ipxe.bak", ""} {
+		if isScriptName(name) {
+			t.Fatalf("%q must be served from the device root", name)
+		}
+	}
+}

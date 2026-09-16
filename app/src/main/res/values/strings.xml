@@ -59,6 +59,7 @@
     <string name="http_port">HTTP port</string>
     <string name="http_port_invalid">Enter a port between 1024 and 65535.</string>
     <string name="boot_file">TFTP boot file</string>
+    <string name="boot_file_hint">Leave empty to pick by client architecture (BIOS / x86-64 UEFI / ARM64 UEFI); fill in to force that file</string>
     <string name="ipxe_script">iPXE boot script</string>
     <string name="import_boot_files">Import PXE files</string>
     <string name="save_configuration">Save configuration</string>
@@ -89,6 +90,7 @@
     <string name="log_service_failed">Service error</string>
     <string name="log_dhcp_response">Boot response sent</string>
     <string name="log_dhcp_failed">Boot response failed</string>
+    <string name="log_dhcp_boot_file_unsupported">No bundled boot file for this architecture</string>
     <string name="log_request_rejected">Request rejected</string>
     <string name="log_file_unavailable">File unavailable</string>
     <string name="log_transfer_started">Transfer started</string>

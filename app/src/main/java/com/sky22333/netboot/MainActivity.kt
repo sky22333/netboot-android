@@ -94,6 +94,7 @@ import com.sky22333.netboot.data.IsoState
 import com.sky22333.netboot.data.RuntimeEventEntity
 import com.sky22333.netboot.data.WindowsVersion
 import com.sky22333.netboot.data.UsbPreparationStage
+import com.sky22333.netboot.data.isBootFileUsable
 import com.sky22333.netboot.runtime.RuntimeState
 import com.sky22333.netboot.runtime.DhcpPool
 import com.sky22333.netboot.runtime.DhcpPoolAllocator
@@ -609,7 +610,7 @@ private fun PxeScreen(
     var adapterIndex by rememberSaveable { mutableIntStateOf(0) }
     var mode by rememberSaveable { mutableStateOf(BootMode.Proxy.wireValue) }
     var port by rememberSaveable { mutableStateOf("8080") }
-    var bootFile by rememberSaveable { mutableStateOf("ipxe-x86_64.efi") }
+    var bootFile by rememberSaveable { mutableStateOf("") }
     var poolStart by rememberSaveable { mutableStateOf("") }
     var poolEnd by rememberSaveable { mutableStateOf("") }
     // Identifies which stored profile revision the form currently reflects, so re-entering the
@@ -620,7 +621,7 @@ private fun PxeScreen(
     val selectedMode = BootMode.fromWireValue(mode) ?: BootMode.Proxy
     val portValue = port.toIntOrNull()
     val portValid = portValue != null && portValue in 1024..65535
-    val bootFileImported = pxeFiles.any { it.name == bootFile }
+    val bootFileValid = isBootFileUsable(bootFile, pxeFiles)
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.importPxeFiles(uris)
     }
@@ -690,7 +691,8 @@ private fun PxeScreen(
         }
         if (!portValid) item { HintCard(stringResource(R.string.http_port_invalid), warning = true) }
         item { TextField(bootFile, { bootFile = it }, Modifier.fillMaxWidth(), label = stringResource(R.string.boot_file), singleLine = true) }
-        if (!bootFileImported) item { HintCard(stringResource(R.string.boot_file_not_imported), warning = true) }
+        item { Text(stringResource(R.string.boot_file_hint), fontSize = 12.sp) }
+        if (!bootFileValid) item { HintCard(stringResource(R.string.boot_file_not_imported), warning = true) }
         if (selectedMode == BootMode.Dhcp) {
             item { SectionTitle(stringResource(R.string.dhcp_pool)) }
             item { TextField(poolStart, { poolStart = it.filter { char -> char.isDigit() || char == '.' } }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_start), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
@@ -717,7 +719,7 @@ private fun PxeScreen(
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CompactButton({ adapter?.let { viewModel.saveProfile(selectedMode, it, portValue ?: 0, bootFile, ipxeScript, poolStart, poolEnd) } }, Modifier.weight(1f), enabled = !runtime.busy && adapter != null && portValid && bootFileImported) { Text(stringResource(R.string.save_configuration)) }
+                CompactButton({ adapter?.let { viewModel.saveProfile(selectedMode, it, portValue ?: 0, bootFile, ipxeScript, poolStart, poolEnd) } }, Modifier.weight(1f), enabled = !runtime.busy && adapter != null && portValid && bootFileValid) { Text(stringResource(R.string.save_configuration)) }
                 CompactButton(
                     onClick = {
                         if (runtime.networkRunning) {
@@ -730,7 +732,7 @@ private fun PxeScreen(
                         }
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !runtime.busy && (runtime.networkRunning || (adapter != null && portValid && bootFileImported)),
+                    enabled = !runtime.busy && (runtime.networkRunning || (adapter != null && portValid && bootFileValid)),
                     primary = !runtime.networkRunning,
                 ) { Text(stringResource(if (runtime.networkRunning) R.string.stop_pxe else R.string.start_pxe)) }
             }
@@ -932,6 +934,7 @@ private fun logEventTitle(code: String): String = stringResource(
         "netboot_stopped" -> R.string.log_service_stopped
         "http_failed" -> R.string.log_service_failed
         "dhcp_response" -> R.string.log_dhcp_response
+        "boot_file_unsupported" -> R.string.log_dhcp_boot_file_unsupported
         "dhcp_response_failed" -> R.string.log_dhcp_failed
         "request_rejected" -> R.string.log_request_rejected
         "file_unavailable" -> R.string.log_file_unavailable

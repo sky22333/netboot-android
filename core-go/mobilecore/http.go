@@ -11,7 +11,7 @@ import (
 
 func newHTTPServer(cfg config, sink *eventSink) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/boot.ipxe", func(response http.ResponseWriter, request *http.Request) {
+	serveScript := func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet && request.Method != http.MethodHead {
 			response.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -21,7 +21,10 @@ func newHTTPServer(cfg config, sink *eventSink) *http.Server {
 		if request.Method == http.MethodGet {
 			_, _ = response.Write([]byte(cfg.IPXEScript))
 		}
-	})
+	}
+	for _, name := range scriptNames {
+		mux.HandleFunc("/"+name, serveScript)
+	}
 	mux.HandleFunc("/", func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet && request.Method != http.MethodHead {
 			response.WriteHeader(http.StatusMethodNotAllowed)

@@ -17,6 +17,7 @@ menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${platform}
 item --gap -- OS Installation
 item public_debian Debian 13 (Trixie) Stable Install
 item public_alpine Alpine Linux v3.23 Lightweight Install
+item public_netbootxyz netboot.xyz Multi-distro Boot Menu
 item --gap -- Tools
 item show_info Show Boot Information
 item shell iPXE Shell
@@ -70,6 +71,10 @@ set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
 kernel ${alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-lts
 initrd ${alpine-base}/initramfs-lts
 boot || goto failed
+
+:public_netbootxyz
+chain --autofree https://boot.netboot.xyz || chain --autofree http://boot.netboot.xyz || goto failed
+goto main_menu
 
 :show_info
 echo

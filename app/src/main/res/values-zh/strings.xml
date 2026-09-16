@@ -59,6 +59,7 @@
     <string name="http_port">HTTP 端口</string>
     <string name="http_port_invalid">请输入 1024 至 65535 之间的端口。</string>
     <string name="boot_file">TFTP 启动文件</string>
+    <string name="boot_file_hint">留空则按客户端架构自动选择；填写则强制使用该文件</string>
     <string name="ipxe_script">iPXE 启动脚本</string>
     <string name="import_boot_files">导入 PXE 文件</string>
     <string name="save_configuration">保存配置</string>
@@ -89,6 +90,7 @@
     <string name="log_service_failed">服务异常</string>
     <string name="log_dhcp_response">已发送启动响应</string>
     <string name="log_dhcp_failed">启动响应发送失败</string>
+    <string name="log_dhcp_boot_file_unsupported">该架构没有内置启动文件</string>
     <string name="log_request_rejected">请求已拒绝</string>
     <string name="log_file_unavailable">文件不可用</string>
     <string name="log_transfer_started">开始传输</string>

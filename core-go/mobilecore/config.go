@@ -16,6 +16,18 @@ const (
 	ModeDHCP  = "dhcp"
 )
 
+// scriptNames are served from config.ipxeScript instead of the device root.
+var scriptNames = []string{"autoexec.ipxe", "boot.ipxe"}
+
+func isScriptName(name string) bool {
+	for _, script := range scriptNames {
+		if name == script {
+			return true
+		}
+	}
+	return false
+}
+
 type config struct {
 	ListenIP     string     `json:"listenIp"`
 	AdvertiseIP  string     `json:"advertiseIp"`
@@ -81,9 +93,7 @@ func parseConfig(raw string) (config, error) {
 	if cfg.MaxTransfers < 1 || cfg.MaxTransfers > 64 {
 		return cfg, errors.New("maxTransfers must be between 1 and 64")
 	}
-	if cfg.BootFile == "" {
-		cfg.BootFile = "ipxe.efi"
-	}
+	// Left empty on purpose: bootFileFor resolves it from the client architecture.
 	if cfg.IPXEScript == "" {
 		cfg.IPXEScript = defaultIPXEScript(cfg)
 	}

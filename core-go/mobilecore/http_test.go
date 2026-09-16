@@ -39,14 +39,17 @@ func TestHTTPServesRangesAndIPXEScript(t *testing.T) {
 		t.Fatalf("unexpected range response %d %q", response.StatusCode, body)
 	}
 
-	response, err = http.Get(server.URL + "/boot.ipxe")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ = io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if string(body) != cfg.IPXEScript {
-		t.Fatalf("unexpected script %q", body)
+	// iPXE asks for the script under its own reserved name; both must serve the same content.
+	for _, path := range []string{"/boot.ipxe", "/autoexec.ipxe"} {
+		response, err = http.Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if string(body) != cfg.IPXEScript {
+			t.Fatalf("unexpected script at %s: %q", path, body)
+		}
 	}
 }
 

@@ -42,6 +42,26 @@ func TestParseConfigAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestParseConfigKeepsAnEmptyBootFileAutomatic(t *testing.T) {
+	raw, err := json.Marshal(config{
+		ListenIP:    "127.0.0.1",
+		AdvertiseIP: "192.168.1.2",
+		Mode:        ModeProxy,
+		Root:        t.TempDir(),
+		HTTPPort:    8080,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseConfig(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BootFile != "" {
+		t.Fatalf("an omitted boot file must stay empty so the architecture decides: %q", cfg.BootFile)
+	}
+}
+
 func TestParseConfigRejectsUnknownAndTrailingFields(t *testing.T) {
 	if _, err := parseConfig(`{"unknown":true}`); err == nil {
 		t.Fatal("expected unknown field error")

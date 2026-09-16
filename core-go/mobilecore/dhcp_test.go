@@ -1,6 +1,7 @@
 package mobilecore
 
 import (
+	"bytes"
 	"encoding/binary"
 	"net"
 	"testing"
@@ -70,5 +71,56 @@ func TestClientArchitecture(t *testing.T) {
 	request := dhcpRequest(1, 11, true)
 	if got := clientArchitecture(parseDHCPOptions(request[240:])); got != "arm64" {
 		t.Fatalf("unexpected architecture %q", got)
+	}
+}
+
+func TestBootFileFollowsClientArchitecture(t *testing.T) {
+	cfg := testDHCPConfig(ModeProxy)
+	cfg.BootFile = ""
+	for _, test := range []struct {
+		architecture uint16
+		want         string
+	}{
+		{0, "undionly.kpxe"},
+		{7, "ipxe-x86_64.efi"},
+		{9, "ipxe-x86_64.efi"},
+		{11, "ipxe-arm64.efi"},
+	} {
+		request := dhcpRequest(1, test.architecture, true)
+		if got := bootFileFor(parseDHCPOptions(request[240:]), cfg); got != test.want {
+			t.Fatalf("architecture %d: got %q, want %q", test.architecture, got, test.want)
+		}
+	}
+}
+
+func TestBootFileIsEmptyWithoutABundledImage(t *testing.T) {
+	cfg := testDHCPConfig(ModeProxy)
+	cfg.BootFile = ""
+	// efi32 ships no IA32 image, and a client that sends no architecture option cannot be matched.
+	for _, architecture := range []uint16{6, 12} {
+		request := dhcpRequest(1, architecture, true)
+		if got := bootFileFor(parseDHCPOptions(request[240:]), cfg); got != "" {
+			t.Fatalf("architecture %d: expected no bundled image, got %q", architecture, got)
+		}
+	}
+	plain := dhcpRequest(1, 0, false)
+	if got := bootFileFor(parseDHCPOptions(plain[240:]), cfg); got != "" {
+		t.Fatalf("expected no bundled image without an architecture option, got %q", got)
+	}
+}
+
+func TestUnbundledArchitectureAdvertisesNoBootFile(t *testing.T) {
+	cfg := testDHCPConfig(ModeProxy)
+	cfg.BootFile = ""
+	response, _ := buildDHCPResponse(dhcpRequest(1, 6, true), cfg, newLeasePool(cfg.DHCP), "67")
+	if response == nil {
+		t.Fatal("expected a proxy offer")
+	}
+	options := parseDHCPOptions(response[240:])
+	if value, present := options[67]; present {
+		t.Fatalf("expected no boot file option, got %q", value)
+	}
+	if file := bytes.TrimRight(response[108:236], "\x00"); len(file) != 0 {
+		t.Fatalf("expected an empty boot file field, got %q", file)
 	}
 }
