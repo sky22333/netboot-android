@@ -27,8 +27,6 @@
 | --- | --- |
 | **KernelSU 已授权本应用**（App Profile / 授权列表允许 `com.sky22333.netboot` 使用 `su`） | ✅ 唯一受支持配置 |
 
-**系统级调度/优先级变动**都可能触发 panic）；内核 IPv4 输出路径可能瘫痪。
-
 应用首次启动**只检测**现有 Root 环境。没有 KernelSU、授权被拒或 Profile 能力不足时，
 展示具体原因与进入 KernelSU Manager 的提示，**不尝试安装或修补 KernelSU**。
 
