@@ -1,0 +1,133 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: 28.2.13676358
+  GOMODULE_COMMIT: 8b95e45f8d3e
+
+jobs:
+  release:
+    name: Static checks, unit tests, R8 release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: core-go/go.mod
+          cache-dependency-path: core-go/go.sum
+
+      - name: Install pinned NDK
+        run: echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"
+
+      - name: Guard the release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git check-ref-format --allow-onelevel "refs/tags/$TAG"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG already exists"
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            echo "::error::HEAD is not the current tip of main; release builds must come from main"
+            exit 1
+          fi
+
+      - name: Assert pinned gomobile revision
+        working-directory: core-go
+        run: |
+          resolved=$(go list -m -f '{{.Version}}' golang.org/x/mobile)
+          echo "golang.org/x/mobile -> $resolved"
+          case "$resolved" in
+            *"$GOMODULE_COMMIT"*) ;;
+            *) echo "::error::golang.org/x/mobile is not pinned to $GOMODULE_COMMIT"; exit 1 ;;
+          esac
+
+      - name: gofmt and go vet
+        working-directory: core-go
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt required for: $unformatted"
+            exit 1
+          fi
+          go vet ./...
+
+      - name: go test -race
+        working-directory: core-go
+        run: go test -race ./...
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Unit tests, static analysis and exported schema check
+        run: |
+          bash ./gradlew testDebugUnitTest lintRelease --stacktrace
+          git diff --exit-code -- app/schemas
+
+      - name: Assemble R8 release
+        env:
+          TAG: ${{ inputs.tag }}
+        run: bash ./gradlew assembleRelease -PnetbootVersionName="${TAG#v}" --stacktrace
+
+      - name: Sign and verify release APKs (PKCS#12)
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SIGNING_KEY_BASE64:?Missing SIGNING_KEY_BASE64}"
+          : "${KEY_ALIAS:?Missing KEY_ALIAS}"
+          : "${KEY_STORE_PASSWORD:?Missing KEY_STORE_PASSWORD}"
+          : "${KEY_PASSWORD:?Missing KEY_PASSWORD}"
+          umask 077
+          signing_dir=$(mktemp -d "$RUNNER_TEMP/netboot-signing.XXXXXX")
+          trap 'rm -rf -- "$signing_dir"' EXIT
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$signing_dir/release.p12"
+          unset SIGNING_KEY_BASE64
+          apksigner=$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name apksigner | sort -V | tail -n 1)
+          test -n "$apksigner"
+          mkdir -p dist
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/release/*-unsigned.apk)
+          test "${#apks[@]}" -gt 0
+          for apk in "${apks[@]}"; do
+            output="dist/$(basename "${apk%-unsigned.apk}").apk"
+            "$apksigner" sign --ks "$signing_dir/release.p12" --ks-type PKCS12 \
+              --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD \
+              --key-pass env:KEY_PASSWORD --out "$output" "$apk"
+            "$apksigner" verify --verbose "$output"
+          done
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.apk

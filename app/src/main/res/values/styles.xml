@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      No android:navigationBarColor / android:statusBarColor here on purpose. A hardcoded value can
+      never equal Miuix's computed surface colour, which is what left a visible band under the
+      navigation bar. The bars are transparent instead and MainActivity paints them from the active
+      Miuix theme, so the bar area and the navigation bar always match.
+    -->
+    <style name="Theme.NetBoot" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>

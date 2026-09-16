@@ -1,0 +1,358 @@
+package com.sky22333.netboot.runtime
+
+import android.content.Context
+import android.util.Log
+import com.sky22333.netboot.data.AppDatabase
+import com.sky22333.netboot.data.BootMode
+import com.sky22333.netboot.data.BootProfileEntity
+import com.sky22333.netboot.data.RuntimeEventEntity
+import com.sky22333.netboot.data.IsoRepository
+import com.sky22333.netboot.data.IsoState
+import com.sky22333.netboot.data.UsbMediaRepository
+import com.sky22333.netboot.data.UsbPreparationStage
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.CancellationException
+import com.sky22333.netboot.root.BrokerException
+import com.sky22333.netboot.root.RootBrokerClient
+import com.sky22333.netboot.root.UsbCapability
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import java.util.concurrent.atomic.AtomicInteger
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+data class RuntimeState(
+    val rootAvailable: Boolean? = null,
+    val usbCapability: UsbCapability? = null,
+    val networkRunning: Boolean = false,
+    val usbAttached: Boolean = false,
+    val usbHostConnected: Boolean = false,
+    val activeIsoId: String? = null,
+    val busy: Boolean = false,
+    val errorCode: String? = null,
+    val usbRecoveryRequired: Boolean = false,
+    val usbPreparing: Boolean = false,
+    val preparedBytes: Long = 0,
+    val preparationTotal: Long = 0,
+    val preparationStage: UsbPreparationStage = UsbPreparationStage.CopyFiles,
+    val usbDiskMode: Boolean = false,
+) {
+    /** True when USB installation media cannot be provided on this device or in this state. */
+    val usbUnsupported: Boolean get() = usbCapability?.supported == false
+}
+
+data class NetworkAdapter(val name: String, val address: String, val prefixLength: Int = 24) {
+    val subnetMask: String get() = (0..3).joinToString(".") { index ->
+        ((0xffffffffL shl (32 - prefixLength)) ushr (24 - index * 8) and 255).toString()
+    }
+}
+
+@Singleton
+class RuntimeRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val database: AppDatabase,
+    private val broker: RootBrokerClient,
+    private val isoRepository: IsoRepository,
+    private val usbMedia: UsbMediaRepository,
+) {
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val operationMutex = Mutex()
+    private val eventsSincePrune = AtomicInteger()
+    @Volatile private var preparationJob: Job? = null
+    private val mutableState = MutableStateFlow(RuntimeState())
+    val state = mutableState.asStateFlow()
+
+    init {
+        scope.launch { broker.events.collect(::recordEvent) }
+        scope.launch { pruneEvents() }
+    }
+
+    suspend fun probe() = runOperation("probe") {
+        val root = broker.rootAvailable()
+        if (!root) {
+            mutableState.value = mutableState.value.copy(rootAvailable = false, usbCapability = null)
+            return@runOperation
+        }
+        val capability = runCatching { broker.probe() }.getOrNull()
+        mutableState.value = mutableState.value.copy(rootAvailable = true, usbCapability = capability)
+    }
+
+    suspend fun startNetwork(profileId: String) = runOperation("start_network") {
+        if (mutableState.value.networkRunning) throw BrokerException("network_already_running")
+        val profile = database.bootProfileDao().find(profileId) ?: error("profile_not_found")
+        val mode = BootMode.fromWireValue(profile.mode) ?: error("unsupported_boot_mode")
+        check(interfaces().any { it.name == profile.interfaceName && it.address == profile.listenAddress }) {
+            "network_interface_changed"
+        }
+        val root = File(context.filesDir, "pxe").apply { mkdirs() }
+        broker.startNetwork(json.encodeToString(profile.toCoreConfig(mode, root)))
+        mutableState.value = mutableState.value.copy(networkRunning = true)
+    }
+
+    suspend fun stopNetwork() = runOperation("stop_network") {
+        broker.stopNetwork()
+        mutableState.value = mutableState.value.copy(networkRunning = false)
+    }
+
+    suspend fun attachIso(isoId: String) = runOperation("attach_usb") {
+        check(!mutableState.value.usbAttached && !mutableState.value.usbRecoveryRequired) { "image_in_use" }
+        val asset = database.isoDao().find(isoId) ?: error("asset_not_found")
+        check(asset.state == IsoState.Ready) { "image_in_use" }
+        insertEvent(severity = "info", source = "media", code = "media_inspection", argumentsJson = json.encodeToString(
+            mapOf("source" to asset.source, "bytes" to asset.fileSize.toString(), "sha256" to asset.sha256),
+        ))
+        mutableState.value = mutableState.value.copy(activeIsoId = isoId)
+        val media = try {
+            preparationJob = currentCoroutineContext()[Job]
+            mutableState.value = mutableState.value.copy(usbPreparing = true, preparedBytes = 0, preparationTotal = 0, preparationStage = UsbPreparationStage.CopyFiles)
+            usbMedia.prepare(asset) { stage, done, total ->
+                mutableState.value = mutableState.value.copy(preparedBytes = done, preparationTotal = total, preparationStage = stage)
+            }
+        } finally {
+            preparationJob = null
+            mutableState.value = mutableState.value.copy(usbPreparing = false)
+        }
+        broker.attachIso(media.file, media.cdrom)
+        mutableState.value = mutableState.value.copy(
+            usbAttached = true,
+            usbHostConnected = runCatching { broker.usbHostConnected() }.getOrDefault(false),
+            activeIsoId = isoId,
+            usbDiskMode = !media.cdrom,
+        )
+    }
+
+    fun cancelUsbPreparation() { preparationJob?.cancel() }
+
+    suspend fun detachIso() = runOperation("detach_usb") {
+        broker.detachIso()
+        mutableState.value = mutableState.value.copy(
+            usbAttached = false,
+            usbHostConnected = false,
+            activeIsoId = null,
+            usbRecoveryRequired = false,
+        )
+    }
+
+    /** Refreshes whether the host finished enumerating the exposed LUN. */
+    suspend fun refreshUsbConnection() {
+        if (!mutableState.value.usbAttached) return
+        val connected = runCatching { broker.usbHostConnected() }.getOrDefault(false)
+        if (connected != mutableState.value.usbHostConnected) {
+            mutableState.value = mutableState.value.copy(usbHostConnected = connected)
+        }
+    }
+
+    suspend fun shutdown() = runOperation("shutdown") {
+        broker.shutdown()
+        mutableState.value = RuntimeState(rootAvailable = mutableState.value.rootAvailable)
+    }
+
+    fun shutdownAfterServiceDestroyed() { scope.launch { shutdown() } }
+
+    suspend fun deleteIso(id: String): Boolean = operationMutex.withLock {
+        val active = mutableState.value.activeIsoId?.let { database.isoDao().find(it) }
+        val target = database.isoDao().find(id)
+        if (mutableState.value.activeIsoId == id || mutableState.value.usbRecoveryRequired || (active != null && active.sha256 == target?.sha256)) false else isoRepository.delete(id)
+    }
+
+    fun interfaces(): List<NetworkAdapter> = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+        .filter { it.isUp && !it.isLoopback }
+        .flatMap { network ->
+            network.interfaceAddresses.filter { it.address is Inet4Address && !it.address.isLoopbackAddress && !it.address.isLinkLocalAddress }
+                .map { NetworkAdapter(network.name, it.address.hostAddress.orEmpty(), it.networkPrefixLength.toInt()) }
+        }
+        .sortedBy { it.name }
+
+    private suspend fun runOperation(operation: String, block: suspend () -> Unit) = operationMutex.withLock {
+        mutableState.value = mutableState.value.copy(busy = true, errorCode = null)
+        runCatching { block() }.onFailure { error ->
+            if (error is CancellationException) {
+                mutableState.value = mutableState.value.copy(busy = false, activeIsoId = if (operation == "attach_usb" && !mutableState.value.usbAttached) null else mutableState.value.activeIsoId)
+                throw error
+            }
+            val code = normalizeError(error)
+            mutableState.value = mutableState.value.copy(
+                errorCode = code,
+                usbRecoveryRequired = mutableState.value.usbRecoveryRequired || code == "usb_restore_failed",
+                activeIsoId = if (operation == "attach_usb" && code != "usb_restore_failed" && !mutableState.value.usbAttached) null else mutableState.value.activeIsoId,
+            )
+            // USB and root failures carry device-specific details that are not reproducible off the
+            // device, so the full text goes to logcat as well as to the event log. The UI only shows
+            // the localized code, which is not enough to diagnose a refusal from the kernel.
+            Log.w(LogTag, "$operation failed: code=$code detail=${error.message}")
+            insertEvent(
+                severity = "error",
+                source = "runtime",
+                code = "operation_failed",
+                argumentsJson = json.encodeToString(mapOf("operation" to operation, "code" to code, "detail" to (error.message ?: ""))),
+            )
+        }
+        mutableState.value = mutableState.value.copy(busy = false)
+    }
+
+    /**
+     * Maps a failure to the stable code the UI localizes, and returns the full text for the log.
+     *
+     * The broker and the app share one set of codes, so [BrokerException.code] is authoritative.
+     * USB failures append `:detail` to the code so the log explains what was refused; the UI only
+     * needs the part before the separator.
+     */
+    private fun normalizeError(error: Throwable): String {
+        val brokerCode = (error as? BrokerException)?.code
+        val message = brokerCode?.takeIf { it.isNotBlank() } ?: error.message ?: return "runtime_failure"
+        return when {
+            message.startsWith("media_") || message == "insufficient_storage" -> message.substringBefore(':')
+            message.contains("existing DHCP server", ignoreCase = true) -> "dhcp_conflict"
+            message.contains("listen HTTP", ignoreCase = true) -> "http_port_unavailable"
+            message.contains("listen TFTP", ignoreCase = true) -> "tftp_port_unavailable"
+            message.contains("listen DHCP", ignoreCase = true) -> "dhcp_port_unavailable"
+            KnownCodes.any { message.startsWith(it, ignoreCase = true) } -> message.substringBefore(':').lowercase()
+            brokerCode != null -> brokerCode.substringBefore(':')
+            else -> "runtime_failure"
+        }
+    }
+
+    private suspend fun recordEvent(raw: String) {
+        val event = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return
+        val code = event["code"]?.jsonPrimitive?.content ?: "unknown"
+        insertEvent(
+            timestamp = event["timestamp"]?.jsonPrimitive?.content?.toLongOrNull() ?: System.currentTimeMillis(),
+            severity = event["level"]?.jsonPrimitive?.content ?: "info",
+            source = event["source"]?.jsonPrimitive?.content ?: "core",
+            code = code,
+            argumentsJson = event["arguments"]?.toString() ?: "{}",
+        )
+        // A failed USB recovery means the phone is not in its original configuration. It has to be
+        // visible on the home screen, not only in the log, because the user must act on it.
+        if (code == "usb_restore_failed") {
+            mutableState.value = mutableState.value.copy(errorCode = code, usbRecoveryRequired = true, usbHostConnected = false)
+        }
+    }
+
+    private suspend fun insertEvent(
+        severity: String,
+        source: String,
+        code: String,
+        argumentsJson: String,
+        timestamp: Long = System.currentTimeMillis(),
+    ) {
+        database.runtimeEventDao().insert(RuntimeEventEntity(timestamp = timestamp, severity = severity, source = source, eventCode = code, argumentsJson = argumentsJson))
+        if (eventsSincePrune.incrementAndGet() >= 25) {
+            eventsSincePrune.set(0)
+            pruneEvents()
+        }
+    }
+
+    private suspend fun pruneEvents() {
+        database.runtimeEventDao().prune(System.currentTimeMillis() - EventRetentionMillis, MaxStoredEvents)
+    }
+
+    /**
+     * Builds the configuration the Go core starts with.
+     *
+     * The DHCP pool is derived per network by [DhcpPoolAllocator] so that the server can never hand
+     * out its own address, the network address or the broadcast address.
+     */
+    private fun BootProfileEntity.toCoreConfig(mode: BootMode, root: File): CoreConfig {
+        val adapter = interfaces().first { it.name == interfaceName && it.address == listenAddress }
+        val pool = DhcpPoolAllocator.allocate(
+            requestedStart = if (mode == BootMode.Dhcp) dhcpPoolStart else "",
+            requestedEnd = if (mode == BootMode.Dhcp) dhcpPoolEnd else "",
+            serverAddress = advertiseAddress,
+            subnetMask = adapter.subnetMask,
+        )
+        return CoreConfig(
+            listenIp = listenAddress,
+            advertiseIp = advertiseAddress,
+            mode = mode.wireValue,
+            root = root.canonicalPath,
+            httpPort = httpPort,
+            bootFile = bootFile,
+            ipxeScript = menuJson.takeIf { it.startsWith("#!ipxe") }.orEmpty(),
+            maxTransfers = 16,
+            dhcp = DhcpConfig(
+                poolStart = pool.start,
+                poolEnd = pool.end,
+                subnetMask = adapter.subnetMask,
+                router = "",
+                dns = "",
+                leaseSeconds = DefaultLeaseSeconds,
+            ),
+        )
+    }
+
+    companion object {
+        /** Logcat tag for operation failures, so device-specific refusals can be captured directly. */
+        private const val LogTag = "NetBootRuntime"
+
+        private const val MaxStoredEvents = 5000
+
+        /**
+         * Retention limit from the product charter. Enforced on insert rather than by a background
+         * sweep so an idle app never wakes up just to prune logs.
+         */
+        private const val EventRetentionMillis = 7L * 24 * 60 * 60 * 1000
+        private const val DefaultLeaseSeconds = 86400
+
+        private val KnownCodes = setOf(
+            "root_unavailable",
+            "broker_start_failed",
+            "network_interface_changed",
+            "network_already_running",
+            "profile_not_found",
+            "asset_not_found",
+            "unsupported_boot_mode",
+            "usb_restore_failed",
+            "usb_unsupported",
+            "usb_attach_failed",
+            "usb_unbind_failed",
+            "mass_storage_unsupported",
+            "lun_node_missing",
+            "cdrom_attribute_missing",
+            "function_create_failed",
+            "function_link_failed",
+            "backing_file_rejected",
+            "backing_file_mismatch",
+        )
+    }
+}
+
+@Serializable
+private data class CoreConfig(
+    val listenIp: String,
+    val advertiseIp: String,
+    val mode: String,
+    val root: String,
+    val httpPort: Int,
+    val bootFile: String,
+    val ipxeScript: String,
+    val maxTransfers: Int,
+    val dhcp: DhcpConfig,
+)
+
+@Serializable
+private data class DhcpConfig(
+    val poolStart: String,
+    val poolEnd: String,
+    val subnetMask: String,
+    val router: String,
+    val dns: String,
+    val leaseSeconds: Int,
+)

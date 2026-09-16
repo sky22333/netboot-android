@@ -1,0 +1,11 @@
+libudfread 1.2.0
+Copyright (C) 2014-2015 VLC authors and VideoLAN
+Authors include Petri Hintukainen <phintuka@users.sourceforge.net>.
+
+Licensed under GNU LGPL version 2.1 or later; see native-LGPL-2.1.txt.
+Source: https://code.videolan.org/videolan/libudfread
+
+Android NetBoot modifies the volume entry point to discover a physical partition
+using the library's existing -1 selector rather than hardcoding partition zero.
+The exact patch and source archive SHA-256 are recorded in
+app/src/main/cpp/CMakeLists.txt. Partition-map validation is retained.

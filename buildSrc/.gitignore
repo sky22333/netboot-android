@@ -1,0 +1,5 @@
+# Only this module's Gradle output. A bare `build/` here would also match the Kotlin package
+# directory `src/main/kotlin/netboot/build/`, which silently ignored the task sources.
+/build/
+/.gradle/
+/.kotlin/

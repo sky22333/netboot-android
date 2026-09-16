@@ -1,0 +1,124 @@
+#!ipxe
+isset ${net0/ip} || dhcp || goto failed
+set menu-timeout 600000
+set public-mirror https://mirrors.cernet.edu.cn
+
+# Debian mirror configuration
+set debian-mirror-host mirrors.cernet.edu.cn
+set debian-mirror-dir /debian
+set debian-security-path /debian-security
+set debian-release trixie
+
+cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
+iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
+
+:main_menu
+menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${platform}
+item --gap -- OS Installation
+item public_debian Debian 13 (Trixie) Stable Install
+item public_alpine Alpine Linux v3.23 Lightweight Install
+item --gap -- Tools
+item show_info Show Boot Information
+item shell iPXE Shell
+item exit Exit and Boot Local Disk
+choose --timeout ${menu-timeout} --default public_alpine selected || goto exit
+goto ${selected}
+
+:public_debian
+echo Starting Debian 13 installer...
+echo arch=${debian_arch} mode=${platform}
+imgfree
+
+set debian-base ${public-mirror}/debian/dists/${debian-release}/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+
+kernel ${debian-base}/linux \
+    initrd=initrd.gz \
+    ip=dhcp \
+    auto=true \
+    priority=critical \
+    mirror/country=manual \
+    mirror/http/hostname=${debian-mirror-host} \
+    mirror/http/directory=${debian-mirror-dir} \
+    mirror/http/proxy= \
+    apt-setup/services-select=security \
+    apt-setup/security_host=${debian-mirror-host} \
+    apt-setup/security_path=${debian-security-path} \
+    language=zh_CN \
+    country=CN \
+    locale=zh_CN.UTF-8 \
+    keymap=us \
+    hostname=debian \
+    domain= \
+    passwd/root-login=false \
+    passwd/make-user=true \
+    partman-auto/method=regular \
+    partman-auto/choose_recipe=atomic \
+    pkgsel/run_tasksel=false \
+    pkgsel/include=openssh-server,curl,wget,vim,sudo \
+    pkgsel/upgrade=none \
+    popularity-contest/participate=false \
+    openssh-server/password-auth=true
+
+initrd ${debian-base}/initrd.gz
+boot || goto failed
+
+:public_alpine
+echo Starting Alpine Linux installer...
+echo arch=${alpine_arch} mode=${platform}
+imgfree
+set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
+kernel ${alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-lts
+initrd ${alpine-base}/initramfs-lts
+boot || goto failed
+
+:show_info
+echo
+echo Embedded iPXE boot information
+echo debian_arch: ${debian_arch}
+echo alpine_arch: ${alpine_arch}
+echo platform: ${platform}
+echo mac: ${net0/mac}
+echo ip: ${net0/ip}
+echo next-server: ${next-server}
+echo proxydhcp next-server: ${proxydhcp/next-server}
+echo filename: ${filename}
+echo proxydhcp filename: ${proxydhcp/filename}
+echo mirror: ${public-mirror}
+echo release: ${debian-release}
+sleep 8
+goto main_menu
+
+:shell
+echo Entering iPXE shell. Type "exit" to return to the menu.
+shell
+goto main_menu
+
+:failed
+imgfree
+echo
+echo ##############################################
+echo #              BOOT FAILED                   #
+echo ##############################################
+echo
+echo Possible issues:
+echo   - Network connectivity
+echo   - File not found on mirror
+echo   - Unsupported architecture
+echo   - Incorrect boot parameters
+echo
+echo Current network status:
+echo   IP: ${net0/ip}
+echo   Gateway: ${net0/gateway}
+echo   Mirror: ${public-mirror}
+echo   Arch: ${debian_arch}
+sleep 5
+shell
+
+:exit
+iseq ${platform} efi && exit ||
+sanboot --no-describe --drive 0x80 || goto local_boot_failed
+
+:local_boot_failed
+echo Local boot failed, entering shell...
+sleep 3
+shell
