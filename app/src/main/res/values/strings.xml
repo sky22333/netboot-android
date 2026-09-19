@@ -100,6 +100,9 @@
     <string name="log_file_unavailable">File unavailable</string>
     <string name="log_transfer_started">Transfer started</string>
     <string name="log_transfer_timeout">Transfer timed out</string>
+    <string name="log_transfer_failed">Transfer failed</string>
+    <string name="log_transfer_cancelled">Transfer cancelled</string>
+    <string name="log_transfer_peer_stopped">Client ended transfer</string>
     <string name="log_transfer_completed">Transfer completed</string>
     <string name="log_http_request">HTTP request</string>
     <string name="log_operation_failed">Operation failed</string>

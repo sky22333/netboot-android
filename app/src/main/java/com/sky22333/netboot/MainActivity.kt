@@ -919,6 +919,9 @@ private fun logEventTitle(code: String): String = stringResource(
         "file_unavailable" -> R.string.log_file_unavailable
         "transfer_started" -> R.string.log_transfer_started
         "transfer_timeout" -> R.string.log_transfer_timeout
+        "transfer_failed" -> R.string.log_transfer_failed
+        "transfer_cancelled" -> R.string.log_transfer_cancelled
+        "transfer_peer_stopped" -> R.string.log_transfer_peer_stopped
         "file_served" -> R.string.log_transfer_completed
         "http_request" -> R.string.log_http_request
         "operation_failed" -> R.string.log_operation_failed
@@ -930,10 +933,11 @@ private fun logEventTitle(code: String): String = stringResource(
 
 private fun logEventDetail(code: String, values: Map<String, String>): String = when (code) {
     "dhcp_response" -> listOfNotNull(values["client"], values["architecture"], values["bootFile"], values["remote"]).joinToString(" · ")
-    "transfer_started", "file_served", "transfer_timeout", "file_unavailable" -> listOfNotNull(
+    "transfer_started", "file_served", "transfer_timeout", "transfer_failed", "transfer_cancelled", "transfer_peer_stopped", "file_unavailable" -> (listOfNotNull(
         values["client"], values["path"], values["bytes"]?.toLongOrNull()?.let(::formatBytes),
         values["duration"]?.let { "${it}ms" },
-    ).joinToString(" · ")
+    ) + values.filterKeys { it !in setOf("client", "path", "bytes", "duration") }
+        .toSortedMap().map { (key, value) -> "$key=$value" }).joinToString(" · ")
     "http_request" -> listOfNotNull(
         values["client"], listOfNotNull(values["method"], values["path"]).joinToString(" ").takeIf(String::isNotBlank),
         values["status"], values["bytes"]?.toLongOrNull()?.let(::formatBytes), values["duration"]?.let { "${it}ms" },

@@ -100,6 +100,9 @@
     <string name="log_file_unavailable">文件不可用</string>
     <string name="log_transfer_started">开始传输</string>
     <string name="log_transfer_timeout">传输超时</string>
+    <string name="log_transfer_failed">传输失败</string>
+    <string name="log_transfer_cancelled">传输已取消</string>
+    <string name="log_transfer_peer_stopped">客户端结束传输</string>
     <string name="log_transfer_completed">传输完成</string>
     <string name="log_http_request">HTTP 请求</string>
     <string name="log_operation_failed">操作失败</string>
