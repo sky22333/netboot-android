@@ -11,12 +11,16 @@ import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class PxeFile(val name: String, val size: Long, val builtIn: Boolean)
 
@@ -26,21 +30,24 @@ fun isBootFileUsable(bootFile: String, files: List<PxeFile>): Boolean =
 
 @Singleton
 class PxeFileRepository @Inject constructor(@ApplicationContext private val context: Context) {
+    private val mutationMutex = Mutex()
     private val directory = File(context.filesDir, "pxe")
-    private val mutableFiles = MutableStateFlow(scan())
+    private val mutableFiles = MutableStateFlow<List<PxeFile>>(emptyList())
     val files = mutableFiles.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
-        scope.launch {
+        scope.launch { mutationMutex.withLock {
             seedBuiltIns()
             mutableFiles.value = scan()
-        }
+        } }
     }
 
-    fun defaultScript(): String = context.assets.open("pxe/autoexec.ipxe").bufferedReader().use { it.readText() }
+    suspend fun defaultScript(): String = withContext(Dispatchers.IO) {
+        context.assets.open("pxe/autoexec.ipxe").bufferedReader().use { it.readText() }
+    }
 
-    suspend fun import(uris: List<Uri>) = withContext(Dispatchers.IO) {
+    suspend fun import(uris: List<Uri>) = mutationMutex.withLock { withContext(Dispatchers.IO) {
         directory.mkdirs()
         uris.forEach { uri ->
             val name = displayName(uri).substringAfterLast('/').substringAfterLast('\\')
@@ -48,30 +55,41 @@ class PxeFileRepository @Inject constructor(@ApplicationContext private val cont
             require(name !in Reserved) { "reserved_file_name" }
             val destination = File(directory, name)
             val temporary = File(directory, "$name.importing")
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                temporary.outputStream().buffered().use { output -> input.copyTo(output, 256 * 1024) }
-            } ?: throw IOException("source_unavailable")
-            if (temporary.length() == 0L) {
-                temporary.delete()
-                throw IOException("empty_source")
+            try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    temporary.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(256 * 1024)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                } ?: throw IOException("source_unavailable")
+                if (temporary.length() == 0L) throw IOException("empty_source")
+                currentCoroutineContext().ensureActive()
+                Files.move(
+                    temporary.toPath(),
+                    destination.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } finally {
+                Files.deleteIfExists(temporary.toPath())
+                // Earlier files in a multi-file import remain usable if a later file fails.
+                mutableFiles.value = scan()
             }
-            Files.move(
-                temporary.toPath(),
-                destination.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
         }
-        mutableFiles.value = scan()
-    }
+    } }
 
-    suspend fun delete(name: String) = withContext(Dispatchers.IO) {
+    suspend fun delete(name: String) = mutationMutex.withLock { withContext(Dispatchers.IO) {
         require(name !in BuiltIns) { "built_in_file" }
         val file = File(directory, name).canonicalFile
         require(file.parentFile == directory.canonicalFile) { "invalid_file_name" }
         if (file.exists() && !file.delete()) throw IOException("delete_failed")
         mutableFiles.value = scan()
-    }
+    } }
 
     private fun scan(): List<PxeFile> = directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".importing") }
         ?.map { PxeFile(it.name, it.length(), it.name in BuiltIns) }?.sortedWith(compareByDescending<PxeFile> { it.builtIn }.thenBy { it.name }).orEmpty()

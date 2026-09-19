@@ -31,14 +31,15 @@ class UsbMediaRepository @Inject constructor(private val isoRepository: IsoRepos
             UsbMediaLayout.requireOptical(source)
             return@withContext PreparedUsbMedia(source, true)
         }
+        if (!asset.sha256.matches(Regex("[a-fA-F0-9]{64}"))) throw IOException("media_source_changed")
+        val directory = File(root, "media").apply { mkdirs() }
+        if (directory.canonicalFile.parentFile != root || Files.isSymbolicLink(directory.toPath())) throw IOException("media_not_regular")
+        val target = File(directory, "${asset.sha256.lowercase()}-v1.img")
+        // A completed image is keyed by source content; reusing it needs no UDF traversal or JNI load.
+        if (target.isFile && !Files.isSymbolicLink(target.toPath()) && UsbMediaLayout.isDisk(target)) return@withContext PreparedUsbMedia(target, false)
         val coroutine = currentCoroutineContext()
         ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY).use { input ->
             if (!NativeMedia.isWindows(input.fd)) throw IOException(if (asset.source == "microsoft") "media_windows_layout" else "media_large_nonhybrid")
-            if (!asset.sha256.matches(Regex("[a-fA-F0-9]{64}"))) throw IOException("media_source_changed")
-            val directory = File(root, "media").apply { mkdirs() }
-            if (directory.canonicalFile.parentFile != root || Files.isSymbolicLink(directory.toPath())) throw IOException("media_not_regular")
-            val target = File(directory, "${asset.sha256.lowercase()}-v1.img")
-            if (target.isFile && !Files.isSymbolicLink(target.toPath()) && UsbMediaLayout.isDisk(target)) return@withContext PreparedUsbMedia(target, false)
             // Native WIM normalization and split output coexist with the sparse destination.
             if (isoRepository.availableBytes() < source.length() * 5 + 512L * 1024 * 1024) throw IOException("media_storage_required")
             val work = File(directory, "${asset.sha256.lowercase()}-work")
@@ -46,18 +47,11 @@ class UsbMediaRepository @Inject constructor(private val isoRepository: IsoRepos
             if (work.exists() && !work.deleteRecursively()) throw IOException("media_cleanup_failed")
             if (!work.mkdir()) throw IOException("media_write_failed")
             val partial = File(work, "installer.img")
-            var lastUpdate = 0L
-            var lastStage = -1
             try {
                 ParcelFileDescriptor.open(partial, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_TRUNCATE).use { output ->
                     NativeMedia.buildWindows(input.fd, output.fd, work.canonicalPath, object : MediaProgress {
                         override fun onProgress(stage: Int, done: Long, total: Long): Boolean {
-                            val now = System.nanoTime()
-                            if (stage != lastStage || done == total || now - lastUpdate >= 250_000_000L) {
-                                progress(UsbPreparationStage.entries[stage], done, total)
-                                lastUpdate = now
-                                lastStage = stage
-                            }
+                            progress(UsbPreparationStage.entries[stage], done, total)
                             return coroutine.isActive
                         }
                     })

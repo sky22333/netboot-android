@@ -13,6 +13,7 @@ import com.sky22333.netboot.data.MicrosoftIsoCatalog
 import com.sky22333.netboot.data.TemporaryIsoLink
 import com.sky22333.netboot.data.WindowsVersion
 import com.sky22333.netboot.data.UsbMediaLayout
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.map
 import java.io.File
 import java.io.IOException
@@ -44,11 +45,12 @@ data class DownloadProgress(
     val taskId: String,
     val downloadedBytes: Long,
     val totalBytes: Long,
+    val verifying: Boolean = false,
 )
 
 @Singleton
 class DownloadRepository @Inject constructor(
-    database: AppDatabase,
+    private val database: AppDatabase,
     private val isoRepository: IsoRepository,
     private val catalog: MicrosoftIsoCatalog,
     client: OkHttpClient,
@@ -57,6 +59,11 @@ class DownloadRepository @Inject constructor(
     private val downloadDao = database.downloadDao()
     private val createMutex = Mutex()
     private val remoteProbe = RemoteFileProbe(client)
+
+    suspend fun recoverInterrupted(): List<String> = withContext(Dispatchers.IO) {
+        isoRepository.recoverInterruptedImports()
+        downloadDao.interruptedTasks().map { it.id }
+    }
 
     fun observeTasks() = downloadDao.observeAll().map { tasks ->
         tasks.filter { it.state != DownloadState.Completed && it.state != DownloadState.Cancelled }
@@ -69,55 +76,67 @@ class DownloadRepository @Inject constructor(
         val link = catalog.resolve(request)
         val id = UUID.randomUUID().toString()
         val fileName = buildFileName(request, id)
-        val destination = File(isoRepository.managedDirectory(), fileName)
+        val destination = File(isoRepository.managedDirectory(), "$id.iso")
         isoRepository.managedDirectory().mkdirs()
-        isoDao.upsert(
-            IsoAssetEntity(
-                id = id,
-                product = request.version.product,
-                edition = request.version.name,
-                language = request.language.name,
-                architecture = request.architecture.name,
-                source = "microsoft",
-                fileName = fileName,
-                filePath = destination.absolutePath,
-                fileSize = 0,
-                sha256 = "",
-                createdAt = System.currentTimeMillis(),
-                state = IsoState.Downloading,
-            ),
-        )
-        downloadDao.upsertTask(
-            DownloadTaskEntity(
-                id = id,
-                isoAssetId = id,
-                temporaryUrl = link.url,
-                expiresAt = link.expiresAt,
-                etag = null,
-                lastModified = null,
-                totalBytes = 0,
-                downloadedBytes = 0,
-                connectionCount = connections,
-                state = DownloadState.Queued,
-                errorCode = null,
-                updatedAt = System.currentTimeMillis(),
-            ),
-        )
+        database.withTransaction {
+            isoDao.upsert(
+                IsoAssetEntity(
+                    id = id,
+                    product = request.version.product,
+                    edition = request.version.name,
+                    language = request.language.name,
+                    architecture = request.architecture.name,
+                    source = "microsoft",
+                    fileName = fileName,
+                    filePath = destination.absolutePath,
+                    fileSize = 0,
+                    sha256 = "",
+                    createdAt = System.currentTimeMillis(),
+                    state = IsoState.Downloading,
+                ),
+            )
+            downloadDao.upsertTask(
+                DownloadTaskEntity(
+                    id = id,
+                    isoAssetId = id,
+                    temporaryUrl = link.url,
+                    expiresAt = link.expiresAt,
+                    etag = null,
+                    lastModified = null,
+                    totalBytes = 0,
+                    downloadedBytes = 0,
+                    connectionCount = connections,
+                    state = DownloadState.Queued,
+                    errorCode = null,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
         id
     } }
 
-    suspend fun run(taskId: String, onProgress: (DownloadProgress) -> Unit = {}) {
+    suspend fun run(taskId: String, onProgress: (DownloadProgress) -> Unit = {}) = withContext(Dispatchers.IO) {
         val initialTask = downloadDao.findTask(taskId) ?: throw DownloadException("task_not_found")
         val asset = isoDao.find(initialTask.isoAssetId) ?: throw DownloadException("asset_not_found")
-        if (initialTask.state == DownloadState.Completed) return
+        if (initialTask.state == DownloadState.Completed || initialTask.state == DownloadState.Cancelled) return@withContext
         try {
+            // Recover after hashing/rename without needing a still-valid URL or a network connection.
+            val destination = File(asset.filePath)
+            val partial = File(asset.filePath + PartialSuffix)
+            val segments = downloadDao.segments(taskId)
+            val locallyComplete = initialTask.totalBytes > 0 && validSegments(segments, initialTask.totalBytes) &&
+                segments.all { it.currentByte == it.endByte + 1 }
+            if (destination.isFile || (locallyComplete && partial.length() == initialTask.totalBytes && initialTask.errorCode != "media_invalid_iso")) {
+                verifyAndPublish(initialTask, asset, if (destination.isFile) destination else partial, onProgress)
+                return@withContext
+            }
             var link = currentLink(initialTask, asset)
             var refreshed = false
             var forceSingle = false
             while (true) {
                 try {
                     downloadWithLink(initialTask.id, asset, link, onProgress, forceSingle)
-                    return
+                    return@withContext
                 } catch (error: HttpStatusException) {
                     when {
                         error.status == 200 && !forceSingle -> forceSingle = true
@@ -133,7 +152,8 @@ class DownloadRepository @Inject constructor(
             withContext(NonCancellable) { markPaused(taskId) }
             throw cancelled
         } catch (error: Exception) {
-                val current = downloadDao.findTask(taskId)
+            val current = downloadDao.findTask(taskId)
+            database.withTransaction {
                 downloadDao.updateProgress(
                     taskId,
                     current?.downloadedBytes ?: 0,
@@ -142,26 +162,34 @@ class DownloadRepository @Inject constructor(
                     System.currentTimeMillis(),
                 )
                 isoDao.setState(asset.id, IsoState.Failed)
-                throw error
+            }
+            throw error
         }
     }
 
     suspend fun markPaused(taskId: String) {
         val task = downloadDao.findTask(taskId) ?: return
         if (task.state == DownloadState.Completed || task.state == DownloadState.Cancelled) return
-        downloadDao.updateProgress(taskId, task.downloadedBytes, DownloadState.Paused, null, System.currentTimeMillis())
+        database.withTransaction {
+            downloadDao.updateProgress(taskId, task.downloadedBytes, DownloadState.Paused, null, System.currentTimeMillis())
+            isoDao.setState(task.isoAssetId, IsoState.Failed)
+        }
     }
 
     suspend fun cancel(taskId: String, deletePartial: Boolean) = withContext(Dispatchers.IO) {
         if (!deletePartial) { markPaused(taskId); return@withContext }
         val task = downloadDao.findTask(taskId) ?: return@withContext
+        if (task.state == DownloadState.Completed) return@withContext
         val asset = isoDao.find(task.isoAssetId)
         if (asset != null) {
             val partial = File(asset.filePath + PartialSuffix)
             if (partial.exists() && !partial.delete()) throw DownloadException("delete_failed")
         }
-        downloadDao.updateProgress(taskId, task.downloadedBytes, DownloadState.Cancelled, null, System.currentTimeMillis())
-        isoDao.setState(task.isoAssetId, IsoState.Failed)
+        database.withTransaction {
+            downloadDao.deleteSegments(taskId)
+            downloadDao.updateProgress(taskId, 0, DownloadState.Cancelled, null, System.currentTimeMillis())
+            isoDao.setState(task.isoAssetId, IsoState.Failed)
+        }
     }
 
     private suspend fun currentLink(task: DownloadTaskEntity, asset: IsoAssetEntity): TemporaryIsoLink {
@@ -198,7 +226,7 @@ class DownloadRepository @Inject constructor(
         val canResume = metadata.rangeSupported && identityMatches &&
             previous.errorCode != "media_invalid_iso" &&
             previous.totalBytes > 0 &&
-            partial.exists()
+            partial.length() == metadata.totalBytes
         val connectionCount = if (metadata.rangeSupported) previous.connectionCount else 1
         val storedSegments = if (canResume) downloadDao.segments(taskId) else emptyList()
         val segments = if (canResume) {
@@ -226,43 +254,75 @@ class DownloadRepository @Inject constructor(
         )
         isoDao.setState(asset.id, IsoState.Downloading)
         val progress = segments.associate { it.segmentIndex to AtomicLong(it.currentByte) }
-        coroutineScope {
-            val reporter = launch {
-                while (true) {
-                    val downloaded = downloadedBytes(segments, progress)
-                    downloadDao.updateProgress(taskId, downloaded, DownloadState.Running, null, System.currentTimeMillis())
-                    onProgress(DownloadProgress(taskId, downloaded, metadata.totalBytes))
-                    delay(2000)
+        suspend fun checkpoint() {
+            val positions = segments.associate { it.segmentIndex to progress.getValue(it.segmentIndex).get() }
+            database.withTransaction {
+                for (segment in segments) {
+                    downloadDao.updateSegment(taskId, segment.segmentIndex, positions.getValue(segment.segmentIndex))
                 }
-            }
-            try {
-                segments.map { segment ->
-                    async {
-                        downloadSegment(link.url, partial, segment, metadata, progress.getValue(segment.segmentIndex))
-                    }
-                }.awaitAll()
-            } finally {
-                reporter.cancel()
+                val downloaded = segments.sumOf { positions.getValue(it.segmentIndex) - it.startByte }
+                downloadDao.updateProgress(taskId, downloaded, DownloadState.Running, null, System.currentTimeMillis())
             }
         }
+        try {
+            coroutineScope {
+                val reporter = launch {
+                    while (true) {
+                        checkpoint()
+                        onProgress(DownloadProgress(taskId, downloadedBytes(segments, progress), metadata.totalBytes))
+                        delay(2000)
+                    }
+                }
+                try {
+                    segments.map { segment ->
+                        async {
+                            downloadSegment(link.url, partial, segment, metadata, progress.getValue(segment.segmentIndex))
+                        }
+                    }.awaitAll()
+                } finally {
+                    reporter.cancel()
+                }
+            }
+        } finally {
+            // All workers and the reporter have stopped before the final checkpoint.
+            withContext(NonCancellable) { checkpoint() }
+        }
         val downloaded = downloadedBytes(segments, progress)
-        downloadDao.updateProgress(taskId, downloaded, DownloadState.Verifying, null, System.currentTimeMillis())
-        isoDao.setState(asset.id, IsoState.Verifying)
         if (partial.length() != metadata.totalBytes || downloaded != metadata.totalBytes) {
             throw DownloadException("size_mismatch")
         }
-        try { UsbMediaLayout.requireIso(partial) } catch (error: IOException) {
-            throw DownloadException("media_invalid_iso")
-        }
-        val hash = IsoRepository.sha256(partial)
-        val destination = File(asset.filePath)
-        Files.move(partial.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
-        isoDao.complete(asset.id, IsoState.Ready, destination.length(), hash)
-        downloadDao.updateProgress(taskId, downloaded, DownloadState.Completed, null, System.currentTimeMillis())
-        onProgress(DownloadProgress(taskId, downloaded, metadata.totalBytes))
+        verifyAndPublish(downloadDao.findTask(taskId) ?: throw DownloadException("task_not_found"), asset, partial, onProgress)
     }
 
-    internal fun probe(url: String): RemoteMetadata = remoteProbe.probe(url)
+    private suspend fun verifyAndPublish(task: DownloadTaskEntity, asset: IsoAssetEntity, source: File, onProgress: (DownloadProgress) -> Unit) {
+        if (source.length() != task.totalBytes || task.totalBytes <= 0) throw DownloadException("size_mismatch")
+        database.withTransaction {
+            downloadDao.updateProgress(task.id, task.totalBytes, DownloadState.Verifying, null, System.currentTimeMillis())
+            isoDao.setState(asset.id, IsoState.Verifying)
+        }
+        try { UsbMediaLayout.requireIso(source) } catch (_: IOException) {
+            throw DownloadException("media_invalid_iso")
+        }
+        val coroutine = coroutineContext
+        var lastProgress = 0L
+        val hash = IsoRepository.sha256(source, { coroutine.ensureActive() }) { bytes, total ->
+            val now = System.nanoTime()
+            if (bytes == total || now - lastProgress >= 500_000_000L) {
+                onProgress(DownloadProgress(task.id, bytes, total, verifying = true))
+                lastProgress = now
+            }
+        }
+        coroutine.ensureActive()
+        val destination = File(asset.filePath)
+        withContext(NonCancellable) {
+            if (source != destination) Files.move(source.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            database.withTransaction {
+                isoDao.complete(asset.id, IsoState.Ready, destination.length(), hash)
+                downloadDao.updateProgress(task.id, task.totalBytes, DownloadState.Completed, null, System.currentTimeMillis())
+            }
+        }
+        onProgress(DownloadProgress(task.id, task.totalBytes, task.totalBytes))
+    }
 
     private suspend fun downloadSegment(
         url: String,
@@ -274,15 +334,12 @@ class DownloadRepository @Inject constructor(
         val rangeSupported = metadata.rangeSupported
         var position = progress.get()
         if (position > segment.endByte) return
-        var lastCheckpoint = position
         var attempt = 0
         while (position <= segment.endByte) {
             coroutineContext.ensureActive()
             if (!rangeSupported) {
                 position = 0
                 progress.set(0)
-                lastCheckpoint = 0
-                downloadDao.updateSegment(segment.taskId, segment.segmentIndex, 0)
             }
             try {
                 val builder = Request.Builder().url(url).header("Accept-Encoding", "identity")
@@ -310,15 +367,10 @@ class DownloadRepository @Inject constructor(
                             }
                             position += read
                             progress.set(position)
-                            if (position - lastCheckpoint >= CheckpointBytes) {
-                                downloadDao.updateSegment(segment.taskId, segment.segmentIndex, position)
-                                lastCheckpoint = position
-                            }
                         }
                     }
                 }
                 if (position <= segment.endByte) throw IOException("unexpected_eof")
-                downloadDao.updateSegment(segment.taskId, segment.segmentIndex, position)
                 return
             } catch (error: DownloadException) {
                 throw error
@@ -353,7 +405,6 @@ class DownloadRepository @Inject constructor(
     companion object {
         private const val PartialSuffix = ".part"
         private const val BufferSize = 256 * 1024
-        private const val CheckpointBytes = 8L * 1024 * 1024
         private const val MaxAttempts = 3
 
         fun newSegments(taskId: String, totalBytes: Long, connections: Int): List<DownloadSegmentEntity> {

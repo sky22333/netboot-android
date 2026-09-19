@@ -14,17 +14,19 @@ import (
 const dhcpCookie = "\x63\x82\x53\x63"
 
 type leasePool struct {
-	mu    sync.Mutex
-	start uint32
-	end   uint32
-	ttl   time.Duration
-	byMAC map[string]lease
-	byIP  map[uint32]string
+	mu       sync.Mutex
+	start    uint32
+	end      uint32
+	ttl      time.Duration
+	byClient map[string]lease
+	byIP     map[uint32]string
+	declined map[uint32]time.Time
 }
 
 type lease struct {
 	ip      uint32
 	expires time.Time
+	bound   bool
 }
 
 func newLeasePool(cfg dhcpConfig) *leasePool {
@@ -34,7 +36,7 @@ func newLeasePool(cfg dhcpConfig) *leasePool {
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	pool := &leasePool{ttl: ttl, byMAC: make(map[string]lease), byIP: make(map[uint32]string)}
+	pool := &leasePool{ttl: ttl, byClient: make(map[string]lease), byIP: make(map[uint32]string), declined: make(map[uint32]time.Time)}
 	if start != nil && end != nil {
 		pool.start = ipToUint(start)
 		pool.end = ipToUint(end)
@@ -42,33 +44,38 @@ func newLeasePool(cfg dhcpConfig) *leasePool {
 	return pool
 }
 
-func (p *leasePool) assign(mac string, requested net.IP, confirm bool) net.IP {
+func (p *leasePool) expire(now time.Time) {
+	for owner, item := range p.byClient {
+		if !item.expires.After(now) {
+			delete(p.byIP, item.ip)
+			delete(p.byClient, owner)
+		}
+	}
+	for ip, until := range p.declined {
+		if !until.After(now) {
+			delete(p.declined, ip)
+		}
+	}
+}
+
+func (p *leasePool) offer(client string, requested net.IP) net.IP {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
-	for owner, item := range p.byMAC {
-		if !item.expires.After(now) {
-			delete(p.byIP, item.ip)
-			delete(p.byMAC, owner)
-		}
-	}
-	if item, ok := p.byMAC[mac]; ok {
-		if confirm {
-			item.expires = now.Add(p.ttl)
-			p.byMAC[mac] = item
-		}
+	p.expire(now)
+	if item, ok := p.byClient[client]; ok {
 		return uintToIP(item.ip)
 	}
 	if value := requested.To4(); value != nil {
 		candidate := ipToUint(value)
-		if candidate >= p.start && candidate <= p.end && p.byIP[candidate] == "" {
-			p.remember(mac, candidate, now, confirm)
+		if candidate >= p.start && candidate <= p.end && p.byIP[candidate] == "" && p.declined[candidate].IsZero() {
+			p.remember(client, candidate, now, false)
 			return uintToIP(candidate)
 		}
 	}
 	for candidate := p.start; candidate <= p.end && p.start != 0; candidate++ {
-		if p.byIP[candidate] == "" {
-			p.remember(mac, candidate, now, confirm)
+		if p.byIP[candidate] == "" && p.declined[candidate].IsZero() {
+			p.remember(client, candidate, now, false)
 			return uintToIP(candidate)
 		}
 		if candidate == ^uint32(0) {
@@ -78,21 +85,53 @@ func (p *leasePool) assign(mac string, requested net.IP, confirm bool) net.IP {
 	return nil
 }
 
-func (p *leasePool) remember(mac string, ip uint32, now time.Time, confirm bool) {
+func (p *leasePool) remember(client string, ip uint32, now time.Time, confirm bool) {
 	ttl := time.Minute
 	if confirm {
 		ttl = p.ttl
 	}
-	p.byMAC[mac] = lease{ip: ip, expires: now.Add(ttl)}
-	p.byIP[ip] = mac
+	p.byClient[client] = lease{ip: ip, expires: now.Add(ttl), bound: confirm}
+	p.byIP[ip] = client
 }
 
-func (p *leasePool) release(mac string) {
+// A REQUEST can confirm only this client's exact binding/offer, never allocate a substitute.
+// Unknown INIT-REBOOT/renewal clients are left to discover a server (RFC 2131 4.3.2).
+func (p *leasePool) confirm(client string, requested net.IP, selecting bool) byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if item, ok := p.byMAC[mac]; ok {
+	p.expire(time.Now())
+	item, known := p.byClient[client]
+	if !known {
+		if selecting {
+			return 6
+		}
+		return 0
+	}
+	if requested == nil || item.ip != ipToUint(requested) {
+		return 6
+	}
+	p.remember(client, item.ip, time.Now(), true)
+	return 5
+}
+
+func (p *leasePool) release(client string, address net.IP, decline bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if item, ok := p.byClient[client]; ok && address != nil && item.ip == ipToUint(address) {
 		delete(p.byIP, item.ip)
-		delete(p.byMAC, mac)
+		delete(p.byClient, client)
+		if decline {
+			p.declined[item.ip] = time.Now().Add(10 * time.Minute)
+		}
+	}
+}
+
+func (p *leasePool) withdrawOffer(client string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if item, ok := p.byClient[client]; ok && !item.bound {
+		delete(p.byIP, item.ip)
+		delete(p.byClient, client)
 	}
 }
 
@@ -163,6 +202,10 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	if len(request) < 240 || request[0] != 1 || string(request[236:240]) != dhcpCookie {
 		return nil, nil
 	}
+	// This service owns only the selected local LAN, not pools behind DHCP relays.
+	if !net.IP(request[24:28]).Equal(net.IPv4zero) {
+		return nil, nil
+	}
 	options := parseDHCPOptions(request[240:])
 	message := first(options[53])
 	if message == 0 {
@@ -184,37 +227,83 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	if serverIP == nil {
 		return nil, nil
 	}
-	if message == 7 {
-		pool.release(mac)
+	if len(options[53]) != 1 || (options[54] != nil && len(options[54]) != 4) || (options[50] != nil && len(options[50]) != 4) {
 		return nil, nil
 	}
+	client := string([]byte{request[1]}) + mac
+	if len(options[61]) >= 2 {
+		client = string(options[61])
+	}
+	selected := net.IP(options[54]).To4()
+	ciaddr := net.IP(request[12:16]).To4()
 	requested := net.IP(options[50]).To4()
-	if requested == nil && len(request) >= 16 {
-		requested = net.IP(request[12:16]).To4()
-	}
 	responseType := byte(2)
-	confirm := false
-	if message == 3 || port == "4011" {
+	if message == 3 || message == 8 {
 		responseType = 5
-		confirm = true
-	}
-	if message != 1 && message != 3 && message != 8 {
-		return nil, nil
 	}
 	yiaddr := net.IPv4zero.To4()
-	if cfg.Mode == ModeDHCP && message != 8 {
-		yiaddr = pool.assign(mac, requested, confirm)
-		if yiaddr == nil {
-			return buildDHCPNAK(request, serverIP), &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
+	if cfg.Mode == ModeDHCP {
+		if selected != nil && !selected.Equal(serverIP) {
+			if message == 3 {
+				pool.withdrawOffer(client)
+			}
+			return nil, nil
+		}
+		switch message {
+		case 1:
+			yiaddr = pool.offer(client, requested)
+			if yiaddr == nil {
+				return nil, nil
+			} // Exhaustion is not a reason to NAK a DISCOVER.
+		case 3:
+			if selected != nil && (requested == nil || !ciaddr.Equal(net.IPv4zero)) {
+				return nil, nil
+			}
+			if requested != nil && !ciaddr.Equal(net.IPv4zero) {
+				return nil, nil
+			}
+			if requested == nil {
+				requested = ciaddr
+			}
+			if requested.Equal(net.IPv4zero) {
+				return nil, nil
+			}
+			mask := net.IPMask(net.ParseIP(cfg.DHCP.SubnetMask).To4())
+			if !requested.Mask(mask).Equal(serverIP.Mask(mask)) {
+				responseType = 6
+			} else {
+				responseType = pool.confirm(client, requested, selected != nil)
+			}
+			if responseType == 0 {
+				return nil, nil
+			}
+			if responseType == 6 {
+				return buildDHCPNAK(request, serverIP, options[61]), &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
+			}
+			yiaddr = requested
+		case 8:
+			if ciaddr.Equal(net.IPv4zero) {
+				return nil, nil
+			}
+		case 4, 7:
+			if selected == nil {
+				return nil, nil
+			}
+			if message == 7 {
+				requested = ciaddr
+			}
+			pool.release(client, requested, message == 4)
+			return nil, nil
+		default:
+			return nil, nil
 		}
 	}
 	response := make([]byte, 240)
-	copy(response[:12], request[:12])
+	copy(response[:8], request[:8])
+	copy(response[10:16], request[10:16])
 	copy(response[28:44], request[28:44])
 	response[0] = 2
-	for i := 12; i < 28; i++ {
-		response[i] = 0
-	}
+	response[3] = 0
 	copy(response[16:20], yiaddr)
 	copy(response[20:24], serverIP)
 	copy(response[236:240], []byte(dhcpCookie))
@@ -222,36 +311,45 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	copy(response[108:236], []byte(bootFile))
 	response = appendOption(response, 53, []byte{responseType})
 	response = appendOption(response, 54, serverIP)
+	response = appendOption(response, 61, options[61]) // RFC 6842: echo the client identifier.
 	response = appendOption(response, 66, []byte(cfg.AdvertiseIP))
 	response = appendOption(response, 67, []byte(bootFile))
 	if cfg.Mode == ModeDHCP {
 		response = appendOption(response, 1, net.ParseIP(cfg.DHCP.SubnetMask).To4())
 		response = appendOption(response, 3, net.ParseIP(cfg.DHCP.Router).To4())
 		response = appendOption(response, 6, net.ParseIP(cfg.DHCP.DNS).To4())
-		leaseBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(leaseBytes, uint32(cfg.DHCP.LeaseSeconds))
-		response = appendOption(response, 51, leaseBytes)
+		if message != 8 {
+			leaseBytes := make([]byte, 4)
+			binary.BigEndian.PutUint32(leaseBytes, uint32(cfg.DHCP.LeaseSeconds))
+			response = appendOption(response, 51, leaseBytes)
+		}
 	} else {
 		response = appendOption(response, 60, []byte("PXEClient"))
 	}
 	response = append(response, 255)
 	target := &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
+	if !ciaddr.Equal(net.IPv4zero) {
+		target.IP = ciaddr
+	}
+	// Before address configuration, UDP cannot deliver to chaddr without altering ARP state.
+	// RFC 2131 4.1 permits broadcast when pre-configuration unicast is not possible.
 	if port == "4011" {
 		return response, nil // Reply to the request's actual UDP source endpoint.
 	}
 	return response, target
 }
 
-func buildDHCPNAK(request []byte, serverIP net.IP) []byte {
+func buildDHCPNAK(request []byte, serverIP net.IP, clientID []byte) []byte {
 	response := make([]byte, 240)
-	copy(response, request[:240])
+	copy(response[:8], request[:8])
+	copy(response[10:12], request[10:12])
+	copy(response[28:44], request[28:44])
 	response[0] = 2
-	for i := 12; i < 28; i++ {
-		response[i] = 0
-	}
+	response[3] = 0
 	copy(response[236:240], []byte(dhcpCookie))
 	response = appendOption(response, 53, []byte{6})
 	response = appendOption(response, 54, serverIP.To4())
+	response = appendOption(response, 61, clientID)
 	return append(response, 255)
 }
 
@@ -263,18 +361,21 @@ func parseDHCPOptions(raw []byte) map[byte][]byte {
 		if code == 0 {
 			continue
 		}
-		if code == 255 || i >= len(raw) {
-			break
+		if code == 255 {
+			return options
+		}
+		if i >= len(raw) {
+			return nil
 		}
 		length := int(raw[i])
 		i++
 		if i+length > len(raw) {
-			break
+			return nil
 		}
-		options[code] = append([]byte(nil), raw[i:i+length]...)
+		options[code] = append(options[code], raw[i:i+length]...)
 		i += length
 	}
-	return options
+	return nil
 }
 
 func appendOption(packet []byte, code byte, value []byte) []byte {

@@ -69,7 +69,7 @@ func serveTFTP(ctx context.Context, conn net.PacketConn, cfg config, sink *event
 }
 
 func parseTFTPRequest(packet []byte) (tftpRequest, error) {
-	if len(packet) < 4 {
+	if len(packet) < 4 || len(packet) > 512 || packet[len(packet)-1] != 0 {
 		return tftpRequest{}, errors.New("packet is too short")
 	}
 	opcode := binary.BigEndian.Uint16(packet[:2])
@@ -77,20 +77,33 @@ func parseTFTPRequest(packet []byte) (tftpRequest, error) {
 		return tftpRequest{}, errors.New("unsupported opcode")
 	}
 	parts := strings.Split(string(packet[2:]), "\x00")
-	if len(parts) < 3 || parts[0] == "" || !strings.EqualFold(parts[1], "octet") {
+	if len(parts) < 3 || len(parts)%2 != 1 || parts[0] == "" || !strings.EqualFold(parts[1], "octet") {
 		return tftpRequest{}, errors.New("invalid request fields")
 	}
 	options := make(map[string]string)
 	for index := 2; index+1 < len(parts); index += 2 {
 		key := strings.ToLower(parts[index])
-		if key != "" {
-			options[key] = parts[index+1]
+		if _, duplicate := options[key]; key == "" || parts[index+1] == "" || duplicate {
+			return tftpRequest{}, errors.New("invalid duplicate option")
 		}
+		options[key] = parts[index+1]
 	}
 	return tftpRequest{opcode: opcode, name: parts[0], options: options}, nil
 }
 
 func serveTFTPFile(ctx context.Context, cfg config, sink *eventSink, client net.Addr, request tftpRequest) {
+	conn, err := net.ListenPacket("udp4", net.JoinHostPort(cfg.ListenIP, "0"))
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
+	blockSize := negotiatedBlockSize(request.options["blksize"])
+	if blockSize == 0 || (request.options["tsize"] != "" && request.options["tsize"] != "0") {
+		sendTFTPError(conn, client, 8, "invalid option value")
+		return
+	}
 	var reader io.ReadCloser
 	var size int64
 	if isScriptName(request.name) {
@@ -100,15 +113,13 @@ func serveTFTPFile(ctx context.Context, cfg config, sink *eventSink, client net.
 		path, err := safeReadPath(cfg.Root, request.name)
 		if err != nil {
 			sink.emit("warning", "tftp", "file_unavailable", map[string]string{"client": client.String(), "path": request.name})
-			if conn, openErr := net.ListenPacket("udp4", ":0"); openErr == nil {
-				sendTFTPError(conn, client, 1, "file not found")
-				_ = conn.Close()
-			}
+			sendTFTPError(conn, client, 1, "file not found")
 			return
 		}
 		file, err := os.Open(path)
 		if err != nil {
 			sink.emit("warning", "tftp", "file_unavailable", map[string]string{"client": client.String(), "path": request.name})
+			sendTFTPError(conn, client, 1, "file not found")
 			return
 		}
 		info, err := file.Stat()
@@ -121,12 +132,6 @@ func serveTFTPFile(ctx context.Context, cfg config, sink *eventSink, client net.
 		size = info.Size()
 	}
 	defer reader.Close()
-	conn, err := net.ListenPacket("udp4", ":0")
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	blockSize := negotiatedBlockSize(request.options["blksize"])
 	started := time.Now()
 	sink.emit("info", "tftp", "transfer_started", map[string]string{
 		"bytes": strconv.FormatInt(size, 10), "client": client.String(), "path": request.name,
@@ -170,9 +175,17 @@ func serveTFTPFile(ctx context.Context, cfg config, sink *eventSink, client net.
 }
 
 func negotiatedBlockSize(raw string) int {
-	value, err := strconv.Atoi(raw)
-	if err != nil || value < 512 {
+	if raw == "" {
 		return 512
+	}
+	for _, digit := range raw {
+		if digit < '0' || digit > '9' {
+			return 0
+		}
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 8 || value > 65464 {
+		return 0
 	}
 	if value > 1428 {
 		return 1428
@@ -200,6 +213,10 @@ func buildOACK(options map[string]string) []byte {
 func sendTFTPPacketWithAck(ctx context.Context, conn net.PacketConn, client net.Addr, packet []byte, expected uint16) bool {
 	ack := make([]byte, 516)
 	for attempt := 0; attempt < 4; attempt++ {
+		if ctx.Err() != nil {
+			return false
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		if _, err := conn.WriteTo(packet, client); err != nil {
 			return false
 		}
@@ -212,7 +229,14 @@ func sendTFTPPacketWithAck(ctx context.Context, conn net.PacketConn, client net.
 			if err != nil {
 				break
 			}
-			if source.String() == client.String() && n >= 4 && binary.BigEndian.Uint16(ack[:2]) == tftpAck && binary.BigEndian.Uint16(ack[2:4]) == expected {
+			if source.String() != client.String() {
+				sendTFTPError(conn, source, 5, "unknown transfer ID")
+				continue
+			}
+			if n >= 4 && binary.BigEndian.Uint16(ack[:2]) == tftpError {
+				return false
+			}
+			if n == 4 && binary.BigEndian.Uint16(ack[:2]) == tftpAck && binary.BigEndian.Uint16(ack[2:4]) == expected {
 				return true
 			}
 		}
@@ -221,6 +245,7 @@ func sendTFTPPacketWithAck(ctx context.Context, conn net.PacketConn, client net.
 }
 
 func sendTFTPError(conn net.PacketConn, client net.Addr, code uint16, message string) {
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	packet := make([]byte, 4, 5+len(message))
 	binary.BigEndian.PutUint16(packet[0:2], tftpError)
 	binary.BigEndian.PutUint16(packet[2:4], code)

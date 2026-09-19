@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface IsoDao {
+    @Query("SELECT * FROM iso_assets WHERE source = 'import' AND state IN ('importing', 'verifying')")
+    suspend fun interruptedImports(): List<IsoAssetEntity>
+
     @Query("SELECT * FROM iso_assets ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<IsoAssetEntity>>
 
@@ -24,12 +27,15 @@ interface IsoDao {
     @Query("UPDATE iso_assets SET state = :state WHERE id = :id")
     suspend fun setState(id: String, state: String)
 
-    @Query("DELETE FROM iso_assets WHERE id = :id AND state NOT IN ('downloading', 'verifying')")
+    @Query("DELETE FROM iso_assets WHERE id = :id AND state NOT IN ('downloading', 'verifying', 'importing')")
     suspend fun deleteIfIdle(id: String): Int
 }
 
 @Dao
 abstract class DownloadDao {
+    @Query("SELECT * FROM download_tasks WHERE state IN ('queued', 'running', 'verifying')")
+    abstract suspend fun interruptedTasks(): List<DownloadTaskEntity>
+
     @Query("SELECT * FROM download_tasks ORDER BY updatedAt DESC")
     abstract fun observeAll(): Flow<List<DownloadTaskEntity>>
 

@@ -1,0 +1,4 @@
+*.go text eol=lf
+*.ipxe text eol=lf
+*.sh text eol=lf
+gradlew text eol=lf

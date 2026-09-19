@@ -11,7 +11,6 @@ import com.sky22333.netboot.data.AppDatabase
 import com.sky22333.netboot.data.AppSettings
 import com.sky22333.netboot.data.BootMode
 import com.sky22333.netboot.data.BootProfileEntity
-import com.sky22333.netboot.data.DownloadState
 import com.sky22333.netboot.data.IsoArchitecture
 import com.sky22333.netboot.data.IsoLanguage
 import com.sky22333.netboot.data.IsoRepository
@@ -31,12 +30,19 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import java.time.Instant
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -53,12 +59,17 @@ class MainViewModel @Inject constructor(
     val settings = settingsRepository.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
     val assets = isoRepository.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val downloads = downloadRepository.observeTasks().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val networkAdapters = runtimeRepository.observeInterfaces().stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
     val profiles = database.bootProfileDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val events = database.runtimeEventDao().observeLatest().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val runtime = runtimeRepository.state
     val pxeFiles = pxeFileRepository.files
-    val defaultIpxeScript = pxeFileRepository.defaultScript()
-    val downloadCreationBusy = MutableStateFlow(false)
+    val defaultIpxeScript = flow { emit(pxeFileRepository.defaultScript()) }
+        .stateIn(viewModelScope, SharingStarted.Lazily, "")
+    private val mutableDownloadCreationBusy = MutableStateFlow(false)
+    val downloadCreationBusy = mutableDownloadCreationBusy.asStateFlow()
+    val importProgress = isoRepository.importProgress
+    private val imports = ConcurrentHashMap<String, Job>()
     private val mutableMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = mutableMessages.asSharedFlow()
 
@@ -67,26 +78,48 @@ class MainViewModel @Inject constructor(
         // Root / PXE / USB status on launch, and "not checked" would hide the one answer a locked
         // bootloader device needs first.
         refreshCapabilities()
-        viewModelScope.launch {
+        launch {
             // A download interrupted by process death is resumed from persisted state, without
             // replaying any user action.
-            downloadRepository.observeTasks().first()
-                .filter { it.state == DownloadState.Running || it.state == DownloadState.Queued }
-                .forEach { DownloadService.start(context, it.id) }
+            downloadRepository.recoverInterrupted().forEach { DownloadService.start(context, it) }
         }
     }
 
-    fun importIso(uri: Uri) = launch { isoRepository.import(uri) }
+    fun importIso(uri: Uri) = viewModelScope.launch {
+        var assetId: String? = null
+        val job = currentCoroutineContext()[Job] ?: return@launch
+        try {
+            isoRepository.import(uri) { id -> assetId = id; imports[id] = job }
+            mutableMessages.emit("import_complete")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: java.io.IOException) {
+            mutableMessages.emit(error.message ?: "import_failed")
+        } catch (error: IllegalArgumentException) {
+            mutableMessages.emit(error.message ?: "import_failed")
+        } catch (_: SecurityException) {
+            mutableMessages.emit("source_unavailable")
+        } finally {
+            assetId?.let(imports::remove)
+        }
+    }
+
+    fun cancelImport(id: String) { imports[id]?.cancel() }
 
     fun download(version: WindowsVersion, language: IsoLanguage, architecture: IsoArchitecture) {
         if (downloadCreationBusy.value) return
         viewModelScope.launch {
-            downloadCreationBusy.value = true
-            runCatching {
+            mutableDownloadCreationBusy.value = true
+            try {
                 val taskId = downloadRepository.create(IsoRequest(version, language, architecture), settings.value.downloadConnections)
                 DownloadService.start(context, taskId)
-            }.onFailure { mutableMessages.emit(it.message ?: "operation_failed") }
-            downloadCreationBusy.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                mutableMessages.emit(error.message ?: "operation_failed")
+            } finally {
+                mutableDownloadCreationBusy.value = false
+            }
         }
     }
 
@@ -135,14 +168,13 @@ class MainViewModel @Inject constructor(
         require(port in 1024..65535) { "invalid_http_port" }
         require(isBootFileUsable(bootFile, pxeFiles.value)) { "boot_file_not_imported" }
         require(ipxeScript.startsWith("#!ipxe")) { "invalid_ipxe_script" }
-        require(interfaces().any { it.name == adapter.name && it.address == adapter.address }) { "network_interface_changed" }
+        require(adapter in interfaces()) { "network_interface_changed" }
         if (mode == BootMode.Dhcp) {
             // Validate here so a bad range is reported before the privileged session starts; the
             // allocator additionally guarantees the pool never contains the server's own address.
-            val pool = runCatching {
+            runCatching {
                 DhcpPoolAllocator.allocate(dhcpPoolStart, dhcpPoolEnd, adapter.address, adapter.subnetMask)
             }.getOrElse { throw IllegalArgumentException("invalid_dhcp_pool") }
-            require(pool.start != adapter.address && pool.end != adapter.address) { "invalid_dhcp_pool" }
         }
         database.bootProfileDao().upsert(
             BootProfileEntity(
@@ -179,12 +211,15 @@ class MainViewModel @Inject constructor(
 
     fun exportLogs(uri: Uri) = launch {
         val events = database.runtimeEventDao().latestChronological()
-        context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { writer ->
-            for (event in events) {
-                writer.append(formatLog(event))
-                writer.newLine()
-            }
-        } ?: error("log_export_failed")
+        withContext(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { writer ->
+                for (event in events) {
+                    currentCoroutineContext().ensureActive()
+                    writer.append(formatLog(event))
+                    writer.newLine()
+                }
+            } ?: error("log_export_failed")
+        }
         mutableMessages.emit("logs_exported")
     }
 
@@ -202,11 +237,13 @@ class MainViewModel @Inject constructor(
         "${Instant.ofEpochMilli(event.timestamp)} ${event.severity.uppercase()} ${event.source} ${event.eventCode}" +
             if (event.argumentsJson == "{}") "" else " ${event.argumentsJson}"
 
-    fun interfaces(): List<NetworkAdapter> = runCatching { runtimeRepository.interfaces() }.getOrDefault(emptyList())
+    private suspend fun interfaces(): List<NetworkAdapter> =
+        try { runtimeRepository.interfaces() } catch (_: java.net.SocketException) { emptyList() }
 
     private fun launch(block: suspend () -> Unit) {
         viewModelScope.launch {
-            runCatching { block() }.onFailure { mutableMessages.emit(it.message ?: "operation_failed") }
+            try { block() } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutableMessages.emit(error.message ?: "operation_failed") }
         }
     }
 

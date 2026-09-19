@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material.icons.outlined.UsbOff
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -74,7 +76,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -84,8 +85,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import com.sky22333.netboot.data.BootMode
 import com.sky22333.netboot.data.DownloadState
 import com.sky22333.netboot.data.IsoArchitecture
@@ -96,8 +95,6 @@ import com.sky22333.netboot.data.WindowsVersion
 import com.sky22333.netboot.data.UsbPreparationStage
 import com.sky22333.netboot.data.isBootFileUsable
 import com.sky22333.netboot.runtime.RuntimeState
-import com.sky22333.netboot.runtime.DhcpPool
-import com.sky22333.netboot.runtime.DhcpPoolAllocator
 import com.sky22333.netboot.runtime.NetworkAdapter
 import dagger.hilt.android.AndroidEntryPoint
 import java.util.Locale
@@ -198,7 +195,14 @@ private fun NetBootApp(viewModel: MainViewModel) {
 private fun MainShell(viewModel: MainViewModel) {
     // rememberSaveable so a rotation or process recreation keeps the user on the same tab.
     var selected by rememberSaveable { mutableIntStateOf(0) }
-    var script by rememberSaveable { mutableStateOf(viewModel.defaultIpxeScript) }
+    var pxeForm by rememberSaveable(stateSaver = PxeFormState.Saver) { mutableStateOf(PxeFormState()) }
+    val defaultScript by viewModel.defaultIpxeScript.collectAsStateWithLifecycle()
+    LaunchedEffect(defaultScript) {
+        if (pxeForm.script.isEmpty() && defaultScript.isNotEmpty()) pxeForm = pxeForm.copy(script = defaultScript)
+    }
+    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val adapters by viewModel.networkAdapters.collectAsStateWithLifecycle(minActiveState = Lifecycle.State.RESUMED)
+    LaunchedEffect(profiles, adapters) { pxeForm = pxeForm.reconcile(profiles.firstOrNull(), adapters) }
     var editingScript by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val titles = listOf(R.string.home, R.string.images, R.string.pxe, R.string.settings)
@@ -211,7 +215,7 @@ private fun MainShell(viewModel: MainViewModel) {
         viewModel.messages.collect { code -> snackbar.showSnackbar(resources.getString(messageResource(code))) }
     }
     if (editingScript) {
-        ScriptEditorScreen(script, { script = it }, { editingScript = false })
+        ScriptEditorScreen(pxeForm.script, { pxeForm = pxeForm.copy(script = it) }, { editingScript = false })
         return
     }
     Scaffold(
@@ -237,7 +241,7 @@ private fun MainShell(viewModel: MainViewModel) {
                         when (selected) {
             0 -> HomeScreen(viewModel, padding, onNavigate = { selected = it })
             1 -> ImagesScreen(viewModel, padding)
-            2 -> PxeScreen(viewModel, padding, script, { script = it }, { editingScript = true })
+            2 -> PxeScreen(viewModel, padding, pxeForm, adapters, { pxeForm = it }, { editingScript = true })
             else -> SettingsScreen(viewModel, padding)
                         }
                     }
@@ -315,6 +319,7 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
     val state by viewModel.runtime.collectAsStateWithLifecycle()
     val assets by viewModel.assets.collectAsStateWithLifecycle()
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
+    val metricColumns = if (LocalDensity.current.fontScale >= 1.5f) 1 else 3
     val activeDownloads = downloads.count { it.state in listOf(DownloadState.Queued, DownloadState.Running, DownloadState.Verifying) }
     LazyColumn(
         Modifier.fillMaxSize().padding(padding),
@@ -341,7 +346,7 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
         }
         item { SectionTitle(stringResource(R.string.overview)) }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(Modifier.fillMaxWidth(), maxItemsInEachRow = metricColumns, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 DashboardMetric(stringResource(R.string.root_access), when (state.rootAvailable) { true -> stringResource(R.string.available); false -> stringResource(R.string.unavailable); null -> stringResource(R.string.not_checked) }, state.rootAvailable == true, Modifier.weight(1f))
                 DashboardMetric(stringResource(R.string.pxe_service), if (state.networkRunning) stringResource(R.string.active) else stringResource(R.string.stopped), state.networkRunning, Modifier.weight(1f))
                 DashboardMetric(stringResource(R.string.usb_installer), usbInstallerSummary(state.usbAttached, state.usbHostConnected, state.usbUnsupported), state.usbAttached, Modifier.weight(1f))
@@ -380,7 +385,7 @@ private fun RuntimeControls(viewModel: MainViewModel) {
         assets.firstOrNull { it.id == state.activeIsoId }?.let { Text(it.fileName, fontWeight = FontWeight.Medium) }
         if (state.usbPreparing) {
             PreparationProgress(state)
-            CompactButton(viewModel::cancelUsbPreparation) { Text(stringResource(R.string.cancel)) }
+            CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelUsbPreparation)
         }
         if (state.usbRecoveryRequired) Text(runtimeErrorText("usb_restore_failed"), fontSize = 13.sp, color = MiuixTheme.colorScheme.error)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -429,6 +434,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val runtime by viewModel.runtime.collectAsStateWithLifecycle()
     val downloadCreationBusy by viewModel.downloadCreationBusy.collectAsStateWithLifecycle()
+    val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
     var version by rememberSaveable { mutableStateOf(WindowsVersion.Windows11) }
     var language by rememberSaveable { mutableStateOf(IsoLanguage.Chinese) }
     var architecture by rememberSaveable { mutableStateOf(IsoArchitecture.X64) }
@@ -477,14 +483,14 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                 }
                 task.errorCode?.let { Text(runtimeErrorText(it), fontSize = 12.sp, color = MiuixTheme.colorScheme.error) }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (task.state == DownloadState.Running) {
-                        CompactIconButton(icon = Icons.Outlined.Pause, contentDescription = stringResource(R.string.pause), onClick = { viewModel.pauseDownload(task.id) })
+                    if (task.state == DownloadState.Running || task.state == DownloadState.Verifying) {
+                        CompactIconButton(Icons.Outlined.Pause, stringResource(R.string.pause), { viewModel.pauseDownload(task.id) })
                     }
                     if (task.state in listOf(DownloadState.Paused, DownloadState.Failed, DownloadState.Queued)) {
-                        CompactIconButton(icon = Icons.Outlined.PlayArrow, contentDescription = stringResource(R.string.resume), onClick = { viewModel.resumeDownload(task.id) })
+                        if (task.errorCode != "remote_file_changed") CompactIconButton(Icons.Outlined.PlayArrow, stringResource(R.string.resume), { viewModel.resumeDownload(task.id) })
                     }
                     if (task.state !in listOf(DownloadState.Completed, DownloadState.Cancelled)) {
-                        CompactIconButton(icon = Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel), onClick = { pendingCancel = task.id })
+                        CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), { pendingCancel = task.id })
                     }
                 }
             }
@@ -504,7 +510,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
         }
         if (runtime.usbRecoveryRequired) item { RuntimeControls(viewModel) }
         if (assets.isEmpty()) item { Text(stringResource(R.string.no_images)) }
-        items(assets.filter { it.state !in listOf(IsoState.Downloading, IsoState.Verifying) }, key = { "asset:${it.id}" }) { asset ->
+        items(assets.filter { asset -> downloads.none { it.isoAssetId == asset.id } }, key = { "asset:${it.id}" }) { asset ->
             CompactCard(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -513,9 +519,21 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                     }
                     if (asset.sha256.isNotBlank()) CompactIconButton(Icons.Outlined.Info, stringResource(R.string.image_details), { detailAssetId = asset.id })
                 }
+                importProgress[asset.id]?.let { progress ->
+                    Text(stringResource(if (progress.verifying) R.string.state_verifying else R.string.state_importing), fontSize = 13.sp)
+                    if (progress.total > 0) {
+                        LinearProgressIndicator(progress = (progress.bytes.toFloat() / progress.total).coerceIn(0f, 1f))
+                        Text(stringResource(R.string.download_progress, formatBytes(progress.bytes), formatBytes(progress.total)), fontSize = 12.sp)
+                    } else Text(formatBytes(progress.bytes), fontSize = 12.sp)
+                    CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), { viewModel.cancelImport(asset.id) })
+                }
+                if (asset.source == "import" && asset.state == IsoState.Failed) {
+                    Text(stringResource(R.string.import_retry_detail), fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    CompactIconButton(Icons.Outlined.FolderOpen, stringResource(R.string.import_again), { importLauncher.launch(arrayOf("application/x-iso9660-image", "application/octet-stream")) })
+                }
                 if (runtime.activeIsoId == asset.id && runtime.usbPreparing) {
                     PreparationProgress(runtime)
-                    CompactButton(viewModel::cancelUsbPreparation) { Text(stringResource(R.string.cancel)) }
+                    CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelUsbPreparation)
                 }
                 if (runtime.activeIsoId == asset.id && runtime.usbAttached) Text(stringResource(if (runtime.usbDiskMode) R.string.usb_disk_mode else R.string.usb_optical_mode), fontSize = 13.sp)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -595,69 +613,30 @@ private fun PreparationProgress(state: RuntimeState) {
 private fun PxeScreen(
     viewModel: MainViewModel,
     padding: PaddingValues,
-    ipxeScript: String,
-    onScriptChanged: (String) -> Unit,
+    form: PxeFormState,
+    adapters: List<NetworkAdapter>,
+    onFormChanged: (PxeFormState) -> Unit,
     onEditScript: () -> Unit,
 ) {
     val runtime by viewModel.runtime.collectAsStateWithLifecycle()
-    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val pxeFiles by viewModel.pxeFiles.collectAsStateWithLifecycle()
-    // Re-enumerated whenever the screen returns to the foreground: the interface list captured at
-    // first composition goes stale as soon as the user switches Wi-Fi network.
-    var adapters by remember { mutableStateOf(viewModel.interfaces()) }
-    LifecycleEventEffect(Lifecycle.Event.ON_START) { adapters = viewModel.interfaces() }
-    val route = profiles.firstOrNull()
-    var adapterIndex by rememberSaveable { mutableIntStateOf(0) }
-    var mode by rememberSaveable { mutableStateOf(BootMode.Proxy.wireValue) }
-    var port by rememberSaveable { mutableStateOf("8080") }
-    var bootFile by rememberSaveable { mutableStateOf("") }
-    var poolStart by rememberSaveable { mutableStateOf("") }
-    var poolEnd by rememberSaveable { mutableStateOf("") }
-    // Identifies which stored profile revision the form currently reflects, so re-entering the
-    // screen reloads it while edits made from outside the screen still win.
-    var syncedRevision by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingMode by remember { mutableStateOf<BootMode?>(null) }
-    val adapter = adapters.getOrNull(adapterIndex)
-    val selectedMode = BootMode.fromWireValue(mode) ?: BootMode.Proxy
-    val portValue = port.toIntOrNull()
-    val portValid = portValue != null && portValue in 1024..65535
-    val bootFileValid = isBootFileUsable(bootFile, pxeFiles)
+    val adapter = form.adapter?.takeIf { it in adapters }
+    val adapterIndex = adapters.indexOf(adapter).coerceAtLeast(0)
+    val selectedMode = form.mode
+    val portValue = form.port.toIntOrNull()
+    val bootFileValid = isBootFileUsable(form.bootFile, pxeFiles)
+    val configurationValid = adapter != null && form.portValid && form.scriptValid && bootFileValid &&
+        (selectedMode != BootMode.Dhcp || form.poolValid)
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.importPxeFiles(uris)
     }
 
-    // Defaults for an unconfigured pool come from the same allocator the core is fed, so the form
-    // never shows a range that would differ from the one actually used.
-    fun derivedPool(): DhcpPool = DhcpPoolAllocator.allocate("", "", requireNotNull(adapter).address, adapter.subnetMask)
-
-    LaunchedEffect(route?.updatedAt, adapters) {
-        if (route == null) return@LaunchedEffect
-        if (syncedRevision == route.updatedAt) return@LaunchedEffect
-        val defaultPool = adapter?.let { derivedPool() }
-        adapterIndex = adapters.indexOfFirst { it.name == route.interfaceName && it.address == route.listenAddress }
-            .takeIf { it >= 0 } ?: 0
-        mode = route.mode
-        port = route.httpPort.toString()
-        bootFile = route.bootFile
-        poolStart = route.dhcpPoolStart.ifBlank { defaultPool?.start.orEmpty() }
-        poolEnd = route.dhcpPoolEnd.ifBlank { defaultPool?.end.orEmpty() }
-        if (route.menuJson.isNotBlank()) onScriptChanged(route.menuJson)
-        syncedRevision = route.updatedAt
-    }
-
-    LaunchedEffect(adapter?.address, selectedMode) {
-        if (selectedMode != BootMode.Dhcp || adapter == null) return@LaunchedEffect
-        if (poolStart.isBlank() || poolEnd.isBlank()) {
-            val pool = derivedPool()
-            if (poolStart.isBlank()) poolStart = pool.start
-            if (poolEnd.isBlank()) poolEnd = pool.end
-        }
-    }
-
     fun launchStart(target: BootMode) {
-        val current = adapter ?: return
+        if (!configurationValid || runtime.busy) return
+        val current = adapter
         val selectedPort = portValue ?: return
-        viewModel.startNetwork(target, current, selectedPort, bootFile, ipxeScript, poolStart, poolEnd)
+        viewModel.startNetwork(target, current, selectedPort, form.bootFile, form.script, form.poolStart, form.poolEnd)
     }
 
     LazyColumn(
@@ -670,39 +649,38 @@ private fun PxeScreen(
             CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
                 OverlayDropdownPreference(
                     title = stringResource(R.string.network_interface),
-                    items = adapters.map { "${it.name} · ${it.address}" }.ifEmpty { listOf(stringResource(R.string.no_network_interface)) },
+                    items = adapters.map { "${it.name} · ${it.address}/${it.prefixLength}" }.ifEmpty { listOf(stringResource(R.string.no_network_interface)) },
                     selectedIndex = adapterIndex.coerceIn(0, (adapters.size - 1).coerceAtLeast(0)),
                     enabled = adapters.isNotEmpty(),
-                    onSelectedIndexChange = { adapterIndex = it },
+                    onSelectedIndexChange = { onFormChanged(form.selectAdapter(adapters.getOrNull(it))) },
                 )
                 OverlayDropdownPreference(
                     title = stringResource(R.string.dhcp_mode),
                     items = listOf(stringResource(R.string.proxy_dhcp), stringResource(R.string.full_dhcp)),
                     selectedIndex = if (selectedMode == BootMode.Proxy) 0 else 1,
-                    onSelectedIndexChange = { mode = if (it == 0) BootMode.Proxy.wireValue else BootMode.Dhcp.wireValue },
+                    onSelectedIndexChange = { onFormChanged(form.copy(mode = if (it == 0) BootMode.Proxy else BootMode.Dhcp)) },
                 )
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextField(port, { port = it.filter(Char::isDigit).take(5) }, Modifier.weight(1f), label = stringResource(R.string.http_port), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                TextField(form.port, { onFormChanged(form.copy(port = it.filter(Char::isDigit).take(5))) }, Modifier.weight(1f), label = stringResource(R.string.http_port), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 CompactButton({ fileLauncher.launch(arrayOf("*/*")) }, Modifier.weight(1f)) { Text(stringResource(R.string.import_boot_files)) }
             }
         }
-        if (!portValid) item { HintCard(stringResource(R.string.http_port_invalid), warning = true) }
-        item { TextField(bootFile, { bootFile = it }, Modifier.fillMaxWidth(), label = stringResource(R.string.boot_file), singleLine = true) }
+        if (!form.portValid) item { HintCard(stringResource(R.string.http_port_invalid), warning = true) }
+        item { TextField(form.bootFile, { onFormChanged(form.copy(bootFile = it)) }, Modifier.fillMaxWidth(), label = stringResource(R.string.boot_file), singleLine = true) }
         item { Text(stringResource(R.string.boot_file_hint), fontSize = 12.sp) }
         if (!bootFileValid) item { HintCard(stringResource(R.string.boot_file_not_imported), warning = true) }
         if (selectedMode == BootMode.Dhcp) {
             item { SectionTitle(stringResource(R.string.dhcp_pool)) }
-            item { TextField(poolStart, { poolStart = it.filter { char -> char.isDigit() || char == '.' } }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_start), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
-            item { TextField(poolEnd, { poolEnd = it.filter { char -> char.isDigit() || char == '.' } }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_end), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
-            item { HintCard(stringResource(R.string.dhcp_pool_hint)) }
+            item { TextField(form.poolStart, { onFormChanged(form.copy(poolStart = it.filter { char -> char.isDigit() || char == '.' })) }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_start), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
+            item { TextField(form.poolEnd, { onFormChanged(form.copy(poolEnd = it.filter { char -> char.isDigit() || char == '.' })) }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_end), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
         }
         item {
             CompactCard(Modifier.fillMaxWidth(), onClick = onEditScript) {
                 Text(stringResource(R.string.ipxe_script), fontWeight = FontWeight.Medium)
-                Text(ipxeScript.lineSequence().take(3).joinToString("\n"), fontSize = 12.sp)
+                Text(form.script.lineSequence().take(3).joinToString("\n"), fontSize = 12.sp)
             }
         }
         item {
@@ -711,7 +689,7 @@ private fun PxeScreen(
                     CompactComponent(
                         title = file.name,
                         summary = if (file.builtIn) stringResource(R.string.built_in_file_summary, formatBytes(file.size)) else formatBytes(file.size),
-                        onClick = { bootFile = file.name },
+                        onClick = { onFormChanged(form.copy(bootFile = file.name)) },
                         endActions = { if (!file.builtIn) CompactIconButton(icon = Icons.Outlined.Delete, contentDescription = stringResource(R.string.delete), onClick = { viewModel.deletePxeFile(file.name) }) },
                     )
                 }
@@ -719,7 +697,7 @@ private fun PxeScreen(
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CompactButton({ adapter?.let { viewModel.saveProfile(selectedMode, it, portValue ?: 0, bootFile, ipxeScript, poolStart, poolEnd) } }, Modifier.weight(1f), enabled = !runtime.busy && adapter != null && portValid && bootFileValid) { Text(stringResource(R.string.save_configuration)) }
+                CompactButton({ adapter?.let { viewModel.saveProfile(selectedMode, it, portValue ?: 0, form.bootFile, form.script, form.poolStart, form.poolEnd) } }, Modifier.weight(1f), enabled = !runtime.busy && configurationValid) { Text(stringResource(R.string.save_configuration)) }
                 CompactButton(
                     onClick = {
                         if (runtime.networkRunning) {
@@ -732,7 +710,7 @@ private fun PxeScreen(
                         }
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !runtime.busy && (runtime.networkRunning || (adapter != null && portValid && bootFileValid)),
+                    enabled = !runtime.busy && (runtime.networkRunning || configurationValid),
                     primary = !runtime.networkRunning,
                 ) { Text(stringResource(if (runtime.networkRunning) R.string.stop_pxe else R.string.start_pxe)) }
             }
@@ -756,6 +734,7 @@ private fun PxeScreen(
                     if (target != null) launchStart(target)
                 },
                 Modifier.fillMaxWidth(),
+                enabled = configurationValid && !runtime.busy,
             ) { Text(stringResource(R.string.full_dhcp_confirm_action)) }
         }
     }
@@ -1092,10 +1071,12 @@ private fun imageStateText(state: String): String = stringResource(
 private fun runtimeErrorText(code: String): String = stringResource(
     when (code) {
         "root_unavailable" -> R.string.runtime_error_root
+        "remote_file_changed" -> R.string.remote_file_changed
+        "range_mismatch", "invalid_content_range", "size_mismatch" -> R.string.download_integrity_failed
+        "network_or_storage_error" -> R.string.download_connection_failed
         "broker_start_failed" -> R.string.runtime_error_broker
         "network_interface_changed" -> R.string.runtime_error_network_changed
         "network_already_running" -> R.string.runtime_error_already_running
-        "dhcp_conflict" -> R.string.runtime_error_dhcp_conflict
         "http_port_unavailable" -> R.string.runtime_error_http_port
         "tftp_port_unavailable" -> R.string.runtime_error_tftp_port
         "dhcp_port_unavailable" -> R.string.runtime_error_dhcp_port
@@ -1149,6 +1130,11 @@ private fun usbHostConnectedText(hostConnected: Boolean): String = stringResourc
 )
 
 private fun messageResource(code: String): Int = when (code) {
+    "import_complete" -> R.string.import_complete
+    "media_invalid_iso", "empty_source", "not_iso" -> R.string.media_invalid_download
+    "source_unavailable" -> R.string.source_unavailable
+    "size_mismatch" -> R.string.download_integrity_failed
+    "invalid_dhcp_pool" -> R.string.runtime_error_dhcp_pool
     "configuration_saved" -> R.string.configuration_saved
     "boot_file_not_imported" -> R.string.boot_file_not_imported
     "root_unavailable" -> R.string.root_unavailable

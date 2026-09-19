@@ -8,7 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -36,14 +35,13 @@ class DownloadService : Service() {
     private val commands = Mutex()
     private var pendingCommands = 0
     private val jobs = ConcurrentHashMap<String, Job>()
-    private val binder = LocalBinder()
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
     }
 
-    override fun onBind(intent: Intent?): IBinder = binder
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val taskId = intent?.getStringExtra(ExtraTaskId) ?: return START_NOT_STICKY
@@ -81,7 +79,7 @@ class DownloadService : Service() {
         val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             runCatching {
                 repository.run(taskId) { progress ->
-                    updateNotification(progress.taskId, progress.downloadedBytes, progress.totalBytes)
+                    updateNotification(progress.taskId, progress.downloadedBytes, progress.totalBytes, progress.verifying)
                 }
             }.onSuccess {
                 terminalNotification(taskId, true)
@@ -104,6 +102,7 @@ class DownloadService : Service() {
     private suspend fun pauseTask(taskId: String) {
         jobs.remove(taskId)?.cancelAndJoin()
         repository.markPaused(taskId)
+        notificationManager.cancel(taskId.notificationId())
     }
 
     private suspend fun cancelTask(taskId: String, deletePartial: Boolean) {
@@ -135,17 +134,17 @@ class DownloadService : Service() {
         )
     }
 
-    private fun updateNotification(taskId: String, downloaded: Long, total: Long) {
-        notificationManager.notify(taskId.notificationId(), buildNotification(taskId, downloaded, total))
+    private fun updateNotification(taskId: String, downloaded: Long, total: Long, verifying: Boolean) {
+        notificationManager.notify(taskId.notificationId(), buildNotification(taskId, downloaded, total, verifying))
     }
 
-    private fun buildNotification(taskId: String, downloaded: Long, total: Long): Notification {
+    private fun buildNotification(taskId: String, downloaded: Long, total: Long, verifying: Boolean = false): Notification {
         val progress = if (total > 0) ((downloaded * 100) / total).toInt() else 0
         val pauseIntent = servicePendingIntent(ActionPause, taskId)
         val cancelIntent = servicePendingIntent(ActionCancel, taskId)
         return NotificationCompat.Builder(this, ChannelId)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle(getString(R.string.download_running))
+            .setContentTitle(getString(if (verifying) R.string.state_verifying else R.string.download_running))
             .setContentText(if (total > 0) getString(R.string.download_progress, formatBytes(downloaded), formatBytes(total)) else null)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
@@ -191,10 +190,6 @@ class DownloadService : Service() {
     }
 
     private val notificationManager get() = getSystemService(NotificationManager::class.java)
-
-    inner class LocalBinder : Binder() {
-        val service: DownloadService get() = this@DownloadService
-    }
 
     companion object {
         private const val ChannelId = "iso_downloads"

@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="import_retry_detail">导入未完成。请重新选择源文件重试，或删除此记录。</string>
+    <string name="import_again">重新选择源文件</string>
+    <string name="import_complete">镜像已导入并完成检查</string>
+    <string name="source_unavailable">无法继续访问源文件，请重新选择。</string>
+    <string name="download_integrity_failed">镜像数据不完整或不一致。请取消并删除临时文件，然后重试。</string>
+    <string name="download_connection_failed">传输已中断。请检查网络与可用空间，然后继续。</string>
     <string name="iso_chinese">简体中文</string>
     <string name="iso_english">英语</string>
     <string name="retry_restore">恢复 USB 连接</string>
@@ -48,13 +54,12 @@
     <string name="no_network_interface">没有可用的 IPv4 接口</string>
     <string name="dhcp_mode">DHCP 模式</string>
     <string name="proxy_dhcp">ProxyDHCP（推荐）</string>
-    <string name="full_dhcp">完整 DHCP（仅限隔离网络）</string>
+    <string name="full_dhcp">完整 DHCP</string>
     <string name="dhcp_pool">完整 DHCP 地址池</string>
     <string name="dhcp_pool_start">地址池起始地址</string>
     <string name="dhcp_pool_end">地址池结束地址</string>
-    <string name="dhcp_pool_hint">只在该范围内分配地址，且绝不会使用手机自身地址、网络地址和广播地址。/24 网络中最多可分配 254 个地址。</string>
     <string name="full_dhcp_confirm_title">启动完整 DHCP 服务器？</string>
-    <string name="full_dhcp_confirm_detail">本机会向客户端分配 IP 地址。若网络中还能访问到其他 DHCP 服务器，客户端可能拿到冲突地址并断网。应用会先探测现有 DHCP 服务器，一旦有响应就拒绝启动。请仅在隔离网络中使用。</string>
+    <string name="full_dhcp_confirm_detail">本机会向客户端分配 IP 地址。若网络中还能访问到其他 DHCP 服务器，客户端可能拿到冲突地址并断网。请仅在隔离网络中使用。</string>
     <string name="full_dhcp_confirm_action">启动完整 DHCP</string>
     <string name="http_port">HTTP 端口</string>
     <string name="http_port_invalid">请输入 1024 至 65535 之间的端口。</string>
@@ -165,7 +170,6 @@
     <string name="runtime_error_root">请先在 KernelSU 中授予 NetBoot Root 权限，然后重试。</string>
     <string name="runtime_error_broker">无法启动授权服务，请检查 KernelSU 中的 NetBoot 授权。</string>
     <string name="runtime_error_network_changed">所选网络已断开，请选择当前网络后重试。</string>
-    <string name="runtime_error_dhcp_conflict">网络中已有 DHCP 服务，请改用 ProxyDHCP。</string>
     <string name="runtime_error_http_port">HTTP 端口已被占用，请换一个端口。</string>
     <string name="runtime_error_tftp_port">TFTP 端口 69 已被占用，请停止冲突服务后重试。</string>
     <string name="runtime_error_dhcp_port">需要的 DHCP 端口已被占用，请停止冲突服务后重试。</string>

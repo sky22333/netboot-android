@@ -118,6 +118,17 @@ func validateDHCP(cfg *dhcpConfig, advertiseIP string) error {
 	if ipToUint(end)-ipToUint(start) > 4095 {
 		return errors.New("DHCP pool must contain at most 4096 addresses")
 	}
+	ones, bits := net.IPMask(mask).Size()
+	server := net.ParseIP(advertiseIP).To4()
+	if bits != 32 || ones < 1 || ones > 30 || server == nil {
+		return errors.New("invalid DHCP subnet mask or server address")
+	}
+	network := ipToUint(server) & ipToUint(mask)
+	broadcast := network | ^ipToUint(mask)
+	if ipToUint(start) <= network || ipToUint(end) >= broadcast ||
+		(ipToUint(server) >= ipToUint(start) && ipToUint(server) <= ipToUint(end)) {
+		return errors.New("DHCP pool must be on the server subnet and exclude reserved addresses")
+	}
 	if (cfg.Router != "" && net.ParseIP(cfg.Router).To4() == nil) || (cfg.DNS != "" && net.ParseIP(cfg.DNS).To4() == nil) {
 		return errors.New("DHCP router and dns must be IPv4 addresses")
 	}

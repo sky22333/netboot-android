@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
@@ -127,12 +128,16 @@ struct Progress {
     uint64_t done = 0, total = 0;
     int stage = 0;
     uint64_t splitBase = 0;
-    bool notify() {
+    std::chrono::steady_clock::time_point lastUpdate{};
+    bool notify(bool force = false) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!force && now - lastUpdate < std::chrono::milliseconds(250)) return true;
+        lastUpdate = now;
         auto ok = env->CallBooleanMethod(callback, method, stage, static_cast<jlong>(done), static_cast<jlong>(total));
         return !env->ExceptionCheck() && ok;
     }
-    void begin(int nextStage, uint64_t bytes = 0) { stage = nextStage; done = 0; total = bytes; require(notify(), "media_cancelled"); }
-    void advance(uint64_t n) { done += n; require(notify(), "media_cancelled"); }
+    void begin(int nextStage, uint64_t bytes = 0) { stage = nextStage; done = 0; total = bytes; require(notify(true), "media_cancelled"); }
+    void advance(uint64_t n) { done += n; require(notify(done == total), "media_cancelled"); }
 };
 struct FatFile {
     FIL file{};
@@ -183,7 +188,9 @@ enum wimlib_progress_status wimProgress(enum wimlib_progress_msg message, union 
         if (progress.stage == 3) progress.done = std::min(progress.total, progress.splitBase + info->write_streams.completed_compressed_bytes);
         else { progress.done = info->write_streams.completed_bytes; progress.total = info->write_streams.total_bytes; }
     }
-    return progress.notify() ? WIMLIB_PROGRESS_STATUS_CONTINUE : WIMLIB_PROGRESS_STATUS_ABORT;
+    return progress.notify(message == WIMLIB_PROGRESS_MSG_SPLIT_BEGIN_PART ||
+        message == WIMLIB_PROGRESS_MSG_SPLIT_END_PART ||
+        (progress.total > 0 && progress.done == progress.total)) ? WIMLIB_PROGRESS_STATUS_CONTINUE : WIMLIB_PROGRESS_STATUS_ABORT;
 }
 void checkWim(int error) {
     if (error == WIMLIB_ERR_ABORTED_BY_PROGRESS) throw std::runtime_error("media_cancelled");

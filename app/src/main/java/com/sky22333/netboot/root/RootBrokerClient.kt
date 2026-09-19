@@ -44,11 +44,10 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
     val events = mutableEvents.asSharedFlow()
 
     @Volatile private var socket: LocalSocket? = null
-    @Volatile private var input: DataInputStream? = null
     @Volatile private var output: DataOutputStream? = null
     @Volatile private var brokerProcess: java.lang.Process? = null
 
-    suspend fun rootAvailable(): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun rootAvailable(): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val process = ProcessBuilder("su", "-c", "id -u").redirectErrorStream(true).start()
             if (!process.waitFor(5, TimeUnit.SECONDS)) {
@@ -84,7 +83,7 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
         closeConnection()
     }
 
-    private suspend fun request(operation: String, payload: String = ""): BrokerMessage {
+    private suspend fun request(operation: String, payload: String = ""): BrokerMessage = withContext(Dispatchers.IO) {
         ensureConnected()
         val id = nextId.getAndIncrement()
         val result = CompletableDeferred<BrokerMessage>()
@@ -100,7 +99,7 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
             }
             val message = withTimeout(RequestTimeoutMillis) { result.await() }
             if (!message.ok) throw BrokerException(message.errorCode ?: "broker_failure")
-            return message
+            message
         } finally {
             pending.remove(id)
         }
@@ -150,7 +149,6 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
                 throw BrokerException("broker_start_failed", lastError)
             }
             socket = connected
-            input = DataInputStream(connected.inputStream.buffered())
             output = DataOutputStream(connected.outputStream.buffered())
             scope.launch { readMessages(connected, DataInputStream(connected.inputStream.buffered())) }
         }
@@ -184,7 +182,6 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
     private fun closeConnection() {
         runCatching { socket?.close() }
         socket = null
-        input = null
         output = null
         // EOF lets the broker finish USB recovery before exiting. Killing it here races cleanup.
         brokerProcess = null

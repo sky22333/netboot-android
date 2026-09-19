@@ -1,6 +1,18 @@
 package com.sky22333.netboot.runtime
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkRequest
+import android.net.NetworkCapabilities
+import java.net.SocketException
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import android.util.Log
 import com.sky22333.netboot.data.AppDatabase
 import com.sky22333.netboot.data.BootMode
@@ -10,6 +22,7 @@ import com.sky22333.netboot.data.IsoRepository
 import com.sky22333.netboot.data.IsoState
 import com.sky22333.netboot.data.UsbMediaRepository
 import com.sky22333.netboot.data.UsbPreparationStage
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.CancellationException
@@ -85,24 +98,23 @@ class RuntimeRepository @Inject constructor(
     }
 
     suspend fun probe() = runOperation("probe") {
-        val root = broker.rootAvailable()
-        if (!root) {
+        try {
+            val capability = broker.probe()
+            mutableState.value = mutableState.value.copy(rootAvailable = true, usbCapability = capability)
+        } catch (error: BrokerException) {
+            if (error.code != "root_unavailable") throw error
             mutableState.value = mutableState.value.copy(rootAvailable = false, usbCapability = null)
-            return@runOperation
         }
-        val capability = runCatching { broker.probe() }.getOrNull()
-        mutableState.value = mutableState.value.copy(rootAvailable = true, usbCapability = capability)
     }
 
     suspend fun startNetwork(profileId: String) = runOperation("start_network") {
         if (mutableState.value.networkRunning) throw BrokerException("network_already_running")
         val profile = database.bootProfileDao().find(profileId) ?: error("profile_not_found")
         val mode = BootMode.fromWireValue(profile.mode) ?: error("unsupported_boot_mode")
-        check(interfaces().any { it.name == profile.interfaceName && it.address == profile.listenAddress }) {
-            "network_interface_changed"
-        }
+        val adapter = interfaces().firstOrNull { it.name == profile.interfaceName && it.address == profile.listenAddress }
+            ?: error("network_interface_changed")
         val root = File(context.filesDir, "pxe").apply { mkdirs() }
-        broker.startNetwork(json.encodeToString(profile.toCoreConfig(mode, root)))
+        broker.startNetwork(json.encodeToString(profile.toCoreConfig(mode, root, adapter)))
         mutableState.value = mutableState.value.copy(networkRunning = true)
     }
 
@@ -172,13 +184,27 @@ class RuntimeRepository @Inject constructor(
         if (mutableState.value.activeIsoId == id || mutableState.value.usbRecoveryRequired || (active != null && active.sha256 == target?.sha256)) false else isoRepository.delete(id)
     }
 
-    fun interfaces(): List<NetworkAdapter> = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+    fun observeInterfaces() = callbackFlow {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) { trySend(Unit) }
+            override fun onLost(network: Network) { trySend(Unit) }
+        }
+        connectivity.registerNetworkCallback(NetworkRequest.Builder().removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback)
+        trySend(Unit)
+        awaitClose { connectivity.unregisterNetworkCallback(callback) }
+    }.conflate().map {
+        try { interfaces() } catch (_: SocketException) { emptyList() }
+    }.distinctUntilChanged().flowOn(Dispatchers.IO)
+
+    suspend fun interfaces(): List<NetworkAdapter> = withContext(Dispatchers.IO) { NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
         .filter { it.isUp && !it.isLoopback }
         .flatMap { network ->
             network.interfaceAddresses.filter { it.address is Inet4Address && !it.address.isLoopbackAddress && !it.address.isLinkLocalAddress }
                 .map { NetworkAdapter(network.name, it.address.hostAddress.orEmpty(), it.networkPrefixLength.toInt()) }
         }
         .sortedBy { it.name }
+    }
 
     private suspend fun runOperation(operation: String, block: suspend () -> Unit) = operationMutex.withLock {
         mutableState.value = mutableState.value.copy(busy = true, errorCode = null)
@@ -219,7 +245,6 @@ class RuntimeRepository @Inject constructor(
         val message = brokerCode?.takeIf { it.isNotBlank() } ?: error.message ?: return "runtime_failure"
         return when {
             message.startsWith("media_") || message == "insufficient_storage" -> message.substringBefore(':')
-            message.contains("existing DHCP server", ignoreCase = true) -> "dhcp_conflict"
             message.contains("listen HTTP", ignoreCase = true) -> "http_port_unavailable"
             message.contains("listen TFTP", ignoreCase = true) -> "tftp_port_unavailable"
             message.contains("listen DHCP", ignoreCase = true) -> "dhcp_port_unavailable"
@@ -270,14 +295,13 @@ class RuntimeRepository @Inject constructor(
      * The DHCP pool is derived per network by [DhcpPoolAllocator] so that the server can never hand
      * out its own address, the network address or the broadcast address.
      */
-    private fun BootProfileEntity.toCoreConfig(mode: BootMode, root: File): CoreConfig {
-        val adapter = interfaces().first { it.name == interfaceName && it.address == listenAddress }
-        val pool = DhcpPoolAllocator.allocate(
-            requestedStart = if (mode == BootMode.Dhcp) dhcpPoolStart else "",
-            requestedEnd = if (mode == BootMode.Dhcp) dhcpPoolEnd else "",
+    private fun BootProfileEntity.toCoreConfig(mode: BootMode, root: File, adapter: NetworkAdapter): CoreConfig {
+        val pool = if (mode == BootMode.Dhcp) DhcpPoolAllocator.allocate(
+            requestedStart = dhcpPoolStart,
+            requestedEnd = dhcpPoolEnd,
             serverAddress = advertiseAddress,
             subnetMask = adapter.subnetMask,
-        )
+        ) else null
         return CoreConfig(
             listenIp = listenAddress,
             advertiseIp = advertiseAddress,
@@ -288,8 +312,8 @@ class RuntimeRepository @Inject constructor(
             ipxeScript = menuJson.takeIf { it.startsWith("#!ipxe") }.orEmpty(),
             maxTransfers = 16,
             dhcp = DhcpConfig(
-                poolStart = pool.start,
-                poolEnd = pool.end,
+                poolStart = pool?.start.orEmpty(),
+                poolEnd = pool?.end.orEmpty(),
                 subnetMask = adapter.subnetMask,
                 router = "",
                 dns = "",

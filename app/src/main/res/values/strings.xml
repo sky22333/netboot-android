@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="import_retry_detail">The import did not finish. Select the source again to retry, or delete this entry.</string>
+    <string name="import_again">Select source again</string>
+    <string name="import_complete">Image imported and checked</string>
+    <string name="source_unavailable">The source is no longer accessible. Select the file again.</string>
+    <string name="download_integrity_failed">The image data is incomplete or inconsistent. Cancel and delete the partial file, then try again.</string>
+    <string name="download_connection_failed">The transfer stopped. Check the network and available storage, then resume.</string>
     <string name="iso_chinese">Simplified Chinese</string>
     <string name="iso_english">English</string>
     <string name="retry_restore">Restore USB connection</string>
@@ -48,13 +54,12 @@
     <string name="no_network_interface">No active IPv4 interface</string>
     <string name="dhcp_mode">DHCP mode</string>
     <string name="proxy_dhcp">ProxyDHCP (recommended)</string>
-    <string name="full_dhcp">Full DHCP (isolated networks only)</string>
+    <string name="full_dhcp">Full DHCP</string>
     <string name="dhcp_pool">Full DHCP address pool</string>
     <string name="dhcp_pool_start">Pool first address</string>
     <string name="dhcp_pool_end">Pool last address</string>
-    <string name="dhcp_pool_hint">Addresses are handed out only in this range, and the phone\'s own address, the network address and the broadcast address are never used. Starting an IPv4 pool on a /24 leaves at most 254 leases.</string>
     <string name="full_dhcp_confirm_title">Start a full DHCP server?</string>
-    <string name="full_dhcp_confirm_detail">This phone will hand out IP addresses. If another DHCP server is reachable on this network, clients can receive conflicting addresses and lose connectivity. The app probes for an existing DHCP server first and refuses to start if one answers. Continue only on an isolated network.</string>
+    <string name="full_dhcp_confirm_detail">This phone will hand out IP addresses. If another DHCP server is reachable on this network, clients can receive conflicting addresses and lose connectivity. Continue only on an isolated network.</string>
     <string name="full_dhcp_confirm_action">Start full DHCP</string>
     <string name="http_port">HTTP port</string>
     <string name="http_port_invalid">Enter a port between 1024 and 65535.</string>
@@ -163,7 +168,6 @@
     <string name="runtime_error_root">Grant Root access to NetBoot in KernelSU, then try again.</string>
     <string name="runtime_error_broker">The privileged service could not start. Check the NetBoot authorization in KernelSU.</string>
     <string name="runtime_error_network_changed">The selected network is no longer available. Select the current connection and try again.</string>
-    <string name="runtime_error_dhcp_conflict">Another DHCP server is already active. Use ProxyDHCP instead.</string>
     <string name="runtime_error_http_port">The HTTP port is already in use. Choose another port.</string>
     <string name="runtime_error_tftp_port">TFTP port 69 is already in use. Stop the conflicting service and try again.</string>
     <string name="runtime_error_dhcp_port">A required DHCP port is already in use. Stop the conflicting service and try again.</string>

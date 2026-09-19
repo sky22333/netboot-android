@@ -145,7 +145,7 @@ StatusJSON() -> String
 - `Start` 幂等：已运行时返回明确状态，不隐式重启。`Stop` 取消根 context、关闭 socket 与
   HTTP server 并等待 goroutine 退出。
 - Go 核心不认识 Android UI、Room、下载任务或本地化。
-- 协议要求：DHCP 两种互斥模式并**启动前探测现有 DHCP 服务器**；TFTP 支持 RRQ/重传/
+- 协议要求：DHCP 两种互斥模式；启动时仅校验配置与绑定端口，**不探测现有 DHCP 服务器、不绑定客户端 UDP 68 端口**；完整 DHCP 由用户确认在隔离网络使用；TFTP 支持 RRQ/重传/
   `blksize`/`tsize` 与并发上限；TFTP 与 HTTP 路径必须 clean+canonical+根边界校验，拒绝
   `..`、绝对路径与符号链接越界；HTTP Boot 支持 HEAD/Range 且**不得把整文件读入内存**。
 - 脚本以协议保留名下发（`autoexec.ipxe`、`boot.ipxe`），两者都返回同一份 `config.ipxeScript`。
@@ -267,8 +267,11 @@ cd core-go && gofmt -l . && go vet ./... && go test -race ./...
 
 ### 测试策略
 
+- 日常修复默认仅执行必要的本地测试、Lint 和构建；构建成功后不自动启动模拟器或连接真机验证。设备验证仅在用户明确要求时执行，未验证的设备行为如实报告。
+
 - **CI 只跑纯 JVM 单测与 Go 测试**；需要设备的 instrumented 测试（数据库、native 媒体生成）
   由开发者在真机/模拟器上跑，见上表命令。
+- `TestNetworkStartWithClientPortOccupied` 仅在具备低端口绑定权限的专用 Linux/模拟器上，以 `NETBOOT_NETWORK_TEST=1` 显式启用；它会占用 UDP 67/68/69/4011，禁止在真实业务网络运行。
 - `root/` 相关测试必须**注入测试根目录**，针对临时目录执行；**CI 永不触碰真实 `/config`、
   `/sys`、`/dev`**。
 - 静态门禁扫描特权源码，出现 `/dev/block`、分区名、`dd`、`mkfs`、`setenforce`、可写 mount、
@@ -314,6 +317,7 @@ cd core-go && gofmt -l . && go vet ./... && go test -race ./...
 - 公共组件至少有两个真实调用点才提取；含义不同的相似代码不得为了少几行而错误合并。
 - **修 Bug 必须：读真实调用链 → 复现 → 确认根因 → 最小修复。**
   **禁止猜测原因、凭经验判断、用补丁掩盖问题、堆叠防御性代码。**
+- 修复任何 Bug 时，必须横向审查其他功能中的同类根因和调用模式，覆盖成功、失败、取消及恢复路径；只修复有证据的问题，并报告审查范围与未验证项。
 - 删除实现时同步删除过时注释、配置、依赖与测试。不留 TODO 占位、示例密钥、假接口、
   注释掉的旧实现。
 - 注释解释**为什么**与平台限制，不复述代码。
@@ -335,6 +339,8 @@ cd core-go && gofmt -l . && go vet ./... && go test -race ./...
   安排 Close；热路径不制造无界 goroutine/channel 或重复 buffer。
 
 ### UI 与国际化
+
+- 保持既有页面布局和统一按钮风格；能明确表达操作的图标优先使用图标按钮，保留无障碍描述。未经用户明确要求，不擅自将图标操作改为文本按钮或重新设计页面。
 
 - 扁平克制、接近 Miuix 原生：纯色背景、清晰分组、统一圆角、低层级阴影；
   禁渐变、玻璃拟态、无意义阴影、过度动画与装饰性模糊。

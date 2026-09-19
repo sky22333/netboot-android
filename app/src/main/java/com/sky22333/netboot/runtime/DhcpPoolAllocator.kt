@@ -12,7 +12,7 @@ data class DhcpPool(val start: String, val end: String) {
 }
 
 /**
- * Derives a safe DHCP pool for a `/24` (or wider) IPv4 network.
+ * Derives a DHCP pool for IPv4 prefixes /1 through /30, excluding reserved addresses.
  *
  * Two rules drive this code:
  * 1. The pool must never contain the server's own address, the network address or the broadcast
@@ -44,9 +44,8 @@ object DhcpPoolAllocator {
             return DhcpPool(format(start), format(end))
         }
 
-        // Nothing usable was configured: derive the upper half of the host range, which is the
-        // conventional place for a DHCP pool and stays clear of the low addresses firmwares often
-        // assign statically.
+        // Use the larger contiguous host range on either side of the server, capped at 254.
+        // This excludes reserved addresses; it cannot establish whether other hosts use the range.
         val firstHost = network + 1
         val lastHost = broadcast - 1
         if (lastHost <= firstHost) error("invalid_server_address")

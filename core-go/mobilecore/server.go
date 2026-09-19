@@ -27,15 +27,6 @@ func newServer(cfg config, listener Listener) *server {
 }
 
 func (s *server) start() error {
-	if s.cfg.Mode == ModeDHCP {
-		found, err := detectDHCPServer(s.cfg.ListenIP, 1200*time.Millisecond)
-		if err != nil {
-			return fmt.Errorf("probe existing DHCP server: %w", err)
-		}
-		if found {
-			return errors.New("existing DHCP server detected")
-		}
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	httpLn, err := net.Listen("tcp4", net.JoinHostPort(s.cfg.ListenIP, fmt.Sprint(s.cfg.HTTPPort)))
@@ -56,13 +47,7 @@ func (s *server) start() error {
 		dhcpPorts = append(dhcpPorts, "4011")
 	}
 	for _, port := range dhcpPorts {
-		var conn net.PacketConn
-		var listenErr error
-		if s.cfg.Mode == ModeProxy && port == "67" {
-			conn, listenErr = listenProxyDiscovery(s.cfg.ListenIP)
-		} else {
-			conn, listenErr = listenDHCP(net.JoinHostPort(s.cfg.ListenIP, port))
-		}
+		conn, listenErr := listenDHCPInterface(s.cfg.ListenIP, port)
 		if listenErr != nil {
 			s.closeListeners()
 			cancel()

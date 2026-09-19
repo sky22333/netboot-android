@@ -59,7 +59,6 @@ class RuntimeService : Service() {
                     StopNetwork -> runtime.stopNetwork()
                     AttachIso -> runtime.attachIso(requireNotNull(intent.getStringExtra(ExtraId)))
                     DetachIso -> runtime.detachIso()
-                    StopAll -> runtime.shutdown()
                 }
             } } finally {
             if (!runtime.state.value.busy && !runtime.state.value.networkRunning && !runtime.state.value.usbAttached && !runtime.state.value.usbRecoveryRequired) {
@@ -142,13 +141,11 @@ class RuntimeService : Service() {
         private const val StopNetwork = "com.sky22333.netboot.runtime.STOP_NETWORK"
         private const val AttachIso = "com.sky22333.netboot.runtime.ATTACH_ISO"
         private const val DetachIso = "com.sky22333.netboot.runtime.DETACH_ISO"
-        private const val StopAll = "com.sky22333.netboot.runtime.STOP_ALL"
 
         fun startNetwork(context: Context, profileId: String) = start(context, StartNetwork, profileId)
         fun stopNetwork(context: Context) = start(context, StopNetwork)
         fun attachIso(context: Context, isoId: String) = start(context, AttachIso, isoId)
         fun detachIso(context: Context) = start(context, DetachIso)
-        fun stopAll(context: Context) = start(context, StopAll)
 
         private fun start(context: Context, action: String, id: String? = null) {
             context.startForegroundService(Intent(context, RuntimeService::class.java).setAction(action).putExtra(ExtraId, id))

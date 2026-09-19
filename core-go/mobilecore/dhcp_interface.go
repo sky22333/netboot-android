@@ -2,11 +2,12 @@ package mobilecore
 
 import (
 	"fmt"
-	"golang.org/x/net/ipv4"
 	"net"
+
+	"golang.org/x/net/ipv4"
 )
 
-type proxyDiscoveryConn struct {
+type dhcpInterfaceConn struct {
 	net.PacketConn
 	packets *ipv4.PacketConn
 	index   int
@@ -15,7 +16,7 @@ type proxyDiscoveryConn struct {
 
 // Wildcard binding receives limited broadcasts. Ancillary data restricts both
 // receive and reply to the selected LAN without raw sockets or routing changes.
-func listenProxyDiscovery(ip string) (net.PacketConn, error) {
+func listenDHCPInterface(ip, port string) (net.PacketConn, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
@@ -30,7 +31,7 @@ func listenProxyDiscovery(ip string) (net.PacketConn, error) {
 			if err != nil || !host.Equal(net.ParseIP(ip)) {
 				continue
 			}
-			conn, err := listenDHCP("0.0.0.0:67")
+			conn, err := listenDHCP(net.JoinHostPort("0.0.0.0", port))
 			if err != nil {
 				return nil, err
 			}
@@ -39,13 +40,13 @@ func listenProxyDiscovery(ip string) (net.PacketConn, error) {
 				conn.Close()
 				return nil, fmt.Errorf("enable DHCP interface metadata: %w", err)
 			}
-			return &proxyDiscoveryConn{conn, packets, device.Index, host.To4()}, nil
+			return &dhcpInterfaceConn{conn, packets, device.Index, host.To4()}, nil
 		}
 	}
 	return nil, fmt.Errorf("network_interface_changed: no interface for %s", ip)
 }
 
-func (c *proxyDiscoveryConn) ReadFrom(b []byte) (int, net.Addr, error) {
+func (c *dhcpInterfaceConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	for {
 		n, control, remote, err := c.packets.ReadFrom(b)
 		if err != nil {
@@ -57,6 +58,6 @@ func (c *proxyDiscoveryConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	}
 }
 
-func (c *proxyDiscoveryConn) WriteTo(b []byte, target net.Addr) (int, error) {
+func (c *dhcpInterfaceConn) WriteTo(b []byte, target net.Addr) (int, error) {
 	return c.packets.WriteTo(b, &ipv4.ControlMessage{IfIndex: c.index, Src: c.ip}, target)
 }
