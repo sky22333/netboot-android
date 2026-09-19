@@ -42,9 +42,9 @@ func TestDHCPRequestStates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pool := newLeasePool(cfg.DHCP)
 			if tt.offer {
-				buildDHCPResponse(dhcpRequest(1, 7, true), cfg, pool, "67")
+				buildDHCPResponse(dhcpRequest(1, 7, true), cfg, pool, "67", nil)
 			}
-			reply, target := buildDHCPResponse(requestOptions(3, tt.options, tt.ciaddr), cfg, pool, "67")
+			reply, target := buildDHCPResponse(requestOptions(3, tt.options, tt.ciaddr), cfg, pool, "67", nil)
 			var got byte
 			if len(reply) > 0 {
 				got = first(parseDHCPOptions(reply[240:])[53])
@@ -62,7 +62,7 @@ func TestDHCPRequestStates(t *testing.T) {
 func TestDHCPInformDoesNotAllocateOrLease(t *testing.T) {
 	cfg := testDHCPConfig(ModeDHCP)
 	pool := newLeasePool(cfg.DHCP)
-	reply, target := buildDHCPResponse(requestOptions(8, nil, "192.168.50.40"), cfg, pool, "67")
+	reply, target := buildDHCPResponse(requestOptions(8, nil, "192.168.50.40"), cfg, pool, "67", nil)
 	opts := parseDHCPOptions(reply[240:])
 	if first(opts[53]) != 5 || opts[51] != nil || !net.IP(reply[16:20]).Equal(net.IPv4zero) || len(pool.byClient) != 0 {
 		t.Fatal("INFORM must ACK configuration only")
@@ -77,21 +77,21 @@ func TestDHCPClientIdentityDeclineAndRelease(t *testing.T) {
 	pool := newLeasePool(cfg.DHCP)
 	id := []byte{1, 2, 3, 4}
 	opts := map[byte][]byte{61: id}
-	reply, _ := buildDHCPResponse(requestOptions(1, opts, ""), cfg, pool, "67")
+	reply, _ := buildDHCPResponse(requestOptions(1, opts, ""), cfg, pool, "67", nil)
 	ip := bytes.Clone(reply[16:20])
 	opts[54] = net.ParseIP(cfg.AdvertiseIP).To4()
 	opts[50] = ip
-	reply, _ = buildDHCPResponse(requestOptions(3, opts, ""), cfg, pool, "67")
+	reply, _ = buildDHCPResponse(requestOptions(3, opts, ""), cfg, pool, "67", nil)
 	if !bytes.Equal(parseDHCPOptions(reply[240:])[61], id) {
 		t.Fatal("client ID was not echoed")
 	}
-	buildDHCPResponse(requestOptions(4, opts, ""), cfg, pool, "67")
-	reply, _ = buildDHCPResponse(requestOptions(1, map[byte][]byte{61: id}, ""), cfg, pool, "67")
+	buildDHCPResponse(requestOptions(4, opts, ""), cfg, pool, "67", nil)
+	reply, _ = buildDHCPResponse(requestOptions(1, map[byte][]byte{61: id}, ""), cfg, pool, "67", nil)
 	if bytes.Equal(reply[16:20], ip) {
 		t.Fatal("declined IP was reused")
 	}
 	next := net.IP(reply[16:20]).String()
-	buildDHCPResponse(requestOptions(7, map[byte][]byte{61: id, 54: opts[54]}, next), cfg, pool, "67")
+	buildDHCPResponse(requestOptions(7, map[byte][]byte{61: id, 54: opts[54]}, next), cfg, pool, "67", nil)
 	if len(pool.byClient) != 0 {
 		t.Fatal("release did not remove binding")
 	}
@@ -106,14 +106,14 @@ func TestDHCPExhaustionAndUnsupportedRelay(t *testing.T) {
 	cfg := testDHCPConfig(ModeDHCP)
 	cfg.DHCP.PoolEnd = cfg.DHCP.PoolStart
 	pool := newLeasePool(cfg.DHCP)
-	buildDHCPResponse(dhcpRequest(1, 7, true), cfg, pool, "67")
+	buildDHCPResponse(dhcpRequest(1, 7, true), cfg, pool, "67", nil)
 	req := dhcpRequest(1, 7, true)
 	req[33]++
-	if reply, _ := buildDHCPResponse(req, cfg, pool, "67"); reply != nil {
+	if reply, _ := buildDHCPResponse(req, cfg, pool, "67", nil); reply != nil {
 		t.Fatal("exhausted DISCOVER must not NAK")
 	}
 	copy(req[24:28], net.ParseIP("192.168.60.1").To4())
-	if reply, _ := buildDHCPResponse(req, cfg, pool, "67"); reply != nil {
+	if reply, _ := buildDHCPResponse(req, cfg, pool, "67", nil); reply != nil {
 		t.Fatal("must not allocate local pool to relay")
 	}
 }

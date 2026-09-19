@@ -42,10 +42,7 @@ func (s *server) start() error {
 		return fmt.Errorf("listen TFTP: %w", err)
 	}
 	s.udp = append(s.udp, tftpConn)
-	dhcpPorts := []string{"67"}
-	if s.cfg.Mode == ModeProxy {
-		dhcpPorts = append(dhcpPorts, "4011")
-	}
+	dhcpPorts := []string{"67", "4011"}
 	for _, port := range dhcpPorts {
 		conn, listenErr := listenDHCPInterface(s.cfg.ListenIP, port)
 		if listenErr != nil {

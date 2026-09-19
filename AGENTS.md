@@ -149,6 +149,8 @@ StatusJSON() -> String
   `blksize`/`tsize` 与并发上限；TFTP 与 HTTP 路径必须 clean+canonical+根边界校验，拒绝
   `..`、绝对路径与符号链接越界；HTTP Boot 支持 HEAD/Range 且**不得把整文件读入内存**。
 - 脚本以协议保留名下发（`autoexec.ipxe`、`boot.ipxe`），两者都返回同一份 `config.ipxeScript`。
+- 两种 DHCP 模式均监听 UDP 67/4011；PXE 启动发现先于租约处理。仅服务默认启动类型 0、层 0，
+  明确的启动项目请求须返回对应的 option 43/71；4011 允许省略该项目。代理模式不抢答普通租约请求。
   `config.bootFile` 留空＝按 option 93 架构选择内置镜像，显式填写＝强制使用；EFI32 与未上报
   架构没有内置镜像，此时不下发启动文件名并记录 `boot_file_unsupported`。
 

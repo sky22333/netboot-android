@@ -147,7 +147,7 @@ func serveDHCP(ctx context.Context, conn net.PacketConn, cfg config, pool *lease
 			return
 		}
 		request := append([]byte(nil), buf[:n]...)
-		response, target := buildDHCPResponse(request, cfg, pool, port)
+		response, target := buildDHCPResponse(request, cfg, pool, port, sink)
 		if len(response) == 0 {
 			continue
 		}
@@ -157,17 +157,20 @@ func serveDHCP(ctx context.Context, conn net.PacketConn, cfg config, pool *lease
 		_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		if _, err = conn.WriteTo(response, target); err == nil {
 			options := parseDHCPOptions(request[240:])
+			replyOptions := parseDHCPOptions(response[240:])
 			architecture := clientArchitecture(options)
-			bootFile := bootFileFor(options, cfg)
+			bootFile := string(replyOptions[67])
 			sink.emit("info", "dhcp", "dhcp_response", map[string]string{
-				"architecture": architecture,
-				"bootFile":     bootFile,
-				"client":       macString(request),
-				"message":      strconv.Itoa(int(first(options[53]))),
-				"port":         port,
-				"remote":       remote.String(),
+				"architecture":  architecture,
+				"bootFile":      bootFile,
+				"client":        macString(request),
+				"message":       strconv.Itoa(int(first(options[53]))),
+				"response":      strconv.Itoa(int(first(replyOptions[53]))),
+				"bootDiscovery": strconv.FormatBool(port == "4011" || len(replyOptions[43]) > 0),
+				"port":          port,
+				"remote":        remote.String(),
 			})
-			if bootFile == "" {
+			if bootFile == "" && first(replyOptions[53]) != 6 {
 				sink.emit("warning", "dhcp", "boot_file_unsupported", map[string]string{
 					"architecture": architecture, "client": macString(request),
 				})
@@ -198,7 +201,7 @@ func clientArchitecture(options map[byte][]byte) string {
 	}
 }
 
-func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string) ([]byte, net.Addr) {
+func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string, sink *eventSink) ([]byte, net.Addr) {
 	if len(request) < 240 || request[0] != 1 || string(request[236:240]) != dhcpCookie {
 		return nil, nil
 	}
@@ -219,10 +222,6 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	if cfg.Mode == ModeProxy && !isPXE {
 		return nil, nil
 	}
-	// The LAN router owns address assignment and renewal; proxy replies must not interfere.
-	if cfg.Mode == ModeProxy && ((port == "67" && message != 1) || (port == "4011" && message != 3 && message != 8)) {
-		return nil, nil
-	}
 	serverIP := net.ParseIP(cfg.AdvertiseIP).To4()
 	if serverIP == nil {
 		return nil, nil
@@ -237,12 +236,48 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	selected := net.IP(options[54]).To4()
 	ciaddr := net.IP(request[12:16]).To4()
 	requested := net.IP(options[50]).To4()
+	var bootItem []byte
+	bootQuery := false
+	if isPXE && (message == 3 || message == 8) {
+		var valid bool
+		bootItem, valid = parsePXEBootItem(options[43])
+		bootQuery = port == "4011" || bootItem != nil
+		reason := ""
+		switch {
+		case !valid:
+			reason = "invalid_boot_item"
+		case bootQuery && (ciaddr.Equal(net.IPv4zero) || requested != nil):
+			reason = "invalid_boot_request"
+		case bootQuery && selected != nil && !selected.Equal(serverIP):
+			return nil, nil // A request for another server is not ours to answer.
+		case bootItem != nil && binary.BigEndian.Uint16(bootItem[:2]) != 0:
+			reason = "unsupported_boot_type"
+		case bootItem != nil && binary.BigEndian.Uint16(bootItem[2:]) != 0:
+			reason = "unsupported_boot_layer"
+		case bootQuery && bootFileFor(options, cfg) == "":
+			reason = "unsupported_architecture"
+		}
+		if reason != "" {
+			sink.emit("warning", "dhcp", "request_rejected", map[string]string{
+				"client": mac, "port": port, "reason": reason,
+			})
+			return nil, nil
+		}
+	}
+	// Boot discovery must be classified before DHCP address assignment: PXE
+	// broadcasts use port 67, while directed boot queries use port 4011.
+	if port == "4011" && !bootQuery {
+		return nil, nil
+	}
+	if cfg.Mode == ModeProxy && !bootQuery && message != 1 {
+		return nil, nil // The router owns address assignment and renewal.
+	}
 	responseType := byte(2)
 	if message == 3 || message == 8 {
 		responseType = 5
 	}
 	yiaddr := net.IPv4zero.To4()
-	if cfg.Mode == ModeDHCP {
+	if cfg.Mode == ModeDHCP && !bootQuery {
 		if selected != nil && !selected.Equal(serverIP) {
 			if message == 3 {
 				pool.withdrawOffer(client)
@@ -304,6 +339,12 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	copy(response[28:44], request[28:44])
 	response[0] = 2
 	response[3] = 0
+	if bootItem != nil {
+		// PXE 2.1 boot-server ACK: report the existing address, never grant a lease.
+		// A 4011 query without an item retains the ProxyDHCP/BINL reply layout.
+		yiaddr = ciaddr
+		clear(response[12:16])
+	}
 	copy(response[16:20], yiaddr)
 	copy(response[20:24], serverIP)
 	copy(response[236:240], []byte(dhcpCookie))
@@ -314,7 +355,7 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	response = appendOption(response, 61, options[61]) // RFC 6842: echo the client identifier.
 	response = appendOption(response, 66, []byte(cfg.AdvertiseIP))
 	response = appendOption(response, 67, []byte(bootFile))
-	if cfg.Mode == ModeDHCP {
+	if cfg.Mode == ModeDHCP && !bootQuery {
 		response = appendOption(response, 1, net.ParseIP(cfg.DHCP.SubnetMask).To4())
 		response = appendOption(response, 3, net.ParseIP(cfg.DHCP.Router).To4())
 		response = appendOption(response, 6, net.ParseIP(cfg.DHCP.DNS).To4())
@@ -326,17 +367,53 @@ func buildDHCPResponse(request []byte, cfg config, pool *leasePool, port string)
 	} else {
 		response = appendOption(response, 60, []byte("PXEClient"))
 	}
+	if isPXE {
+		response = appendOption(response, 93, options[93])
+		response = appendOption(response, 94, options[94])
+		response = appendOption(response, 97, options[97])
+	}
+	if bootItem != nil {
+		vendor := appendOption(nil, 71, bootItem)
+		response = appendOption(response, 43, append(vendor, 255))
+	}
 	response = append(response, 255)
+	if bootQuery && (port == "4011" || binary.BigEndian.Uint16(request[10:12])&0x8000 == 0) {
+		return response, nil // Unicast discovery replies use the client's source endpoint.
+	}
 	target := &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
-	if !ciaddr.Equal(net.IPv4zero) {
+	if !bootQuery && !ciaddr.Equal(net.IPv4zero) {
 		target.IP = ciaddr
 	}
 	// Before address configuration, UDP cannot deliver to chaddr without altering ARP state.
 	// RFC 2131 4.1 permits broadcast when pre-configuration unicast is not possible.
-	if port == "4011" {
-		return response, nil // Reply to the request's actual UDP source endpoint.
-	}
 	return response, target
+}
+
+// UEFI permits an omitted boot item (default type 0, layer 0). Vendor TLVs
+// may end at the option boundary without an END byte (RFC 2132 section 8.4).
+func parsePXEBootItem(raw []byte) (item []byte, valid bool) {
+	for len(raw) > 0 {
+		code := raw[0]
+		raw = raw[1:]
+		if code == 255 {
+			return item, true
+		}
+		if code == 0 {
+			continue
+		}
+		if len(raw) < 1 || int(raw[0]) > len(raw)-1 {
+			return nil, false
+		}
+		length := int(raw[0])
+		if code == 71 {
+			if length != 4 || item != nil {
+				return nil, false
+			}
+			item = raw[1 : 1+length]
+		}
+		raw = raw[1+length:]
+	}
+	return item, true
 }
 
 func buildDHCPNAK(request []byte, serverIP net.IP, clientID []byte) []byte {

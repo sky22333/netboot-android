@@ -34,7 +34,7 @@ func testDHCPConfig(mode string) config {
 
 func TestDHCPAssignsLease(t *testing.T) {
 	cfg := testDHCPConfig(ModeDHCP)
-	response, _ := buildDHCPResponse(dhcpRequest(1, 7, true), cfg, newLeasePool(cfg.DHCP), "67")
+	response, _ := buildDHCPResponse(dhcpRequest(1, 7, true), cfg, newLeasePool(cfg.DHCP), "67", nil)
 	if len(response) < 240 {
 		t.Fatal("missing response")
 	}
@@ -49,7 +49,7 @@ func TestDHCPAssignsLease(t *testing.T) {
 
 func TestProxyIgnoresNonPXEClient(t *testing.T) {
 	cfg := testDHCPConfig(ModeProxy)
-	response, _ := buildDHCPResponse(dhcpRequest(1, 0, false), cfg, newLeasePool(cfg.DHCP), "67")
+	response, _ := buildDHCPResponse(dhcpRequest(1, 0, false), cfg, newLeasePool(cfg.DHCP), "67", nil)
 	if response != nil {
 		t.Fatal("proxy DHCP must ignore non-PXE clients")
 	}
@@ -60,7 +60,7 @@ func TestIPXEUsesHTTPChain(t *testing.T) {
 	request := dhcpRequest(1, 7, true)
 	request = appendOption(request[:len(request)-1], 175, []byte{1})
 	request = append(request, 255)
-	response, _ := buildDHCPResponse(request, cfg, newLeasePool(cfg.DHCP), "67")
+	response, _ := buildDHCPResponse(request, cfg, newLeasePool(cfg.DHCP), "67", nil)
 	options := parseDHCPOptions(response[240:])
 	if string(options[67]) != "http://192.168.50.1:8080/boot.ipxe" {
 		t.Fatalf("unexpected iPXE URL %q", options[67])
@@ -112,7 +112,7 @@ func TestBootFileIsEmptyWithoutABundledImage(t *testing.T) {
 func TestUnbundledArchitectureAdvertisesNoBootFile(t *testing.T) {
 	cfg := testDHCPConfig(ModeProxy)
 	cfg.BootFile = ""
-	response, _ := buildDHCPResponse(dhcpRequest(1, 6, true), cfg, newLeasePool(cfg.DHCP), "67")
+	response, _ := buildDHCPResponse(dhcpRequest(1, 6, true), cfg, newLeasePool(cfg.DHCP), "67", nil)
 	if response == nil {
 		t.Fatal("expected a proxy offer")
 	}
