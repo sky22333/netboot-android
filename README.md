@@ -26,6 +26,14 @@
 
 使用期间请勿切换 USB 模式，文件传输和 USB 调试可能暂时断开。实际兼容性取决于镜像、电脑固件和手机驱动。
 
+## 预览
+
+<div style="display:inline-block">
+<img src=".github/image/demo1.jpg" alt="demo1" width="230">
+<img src=".github/image/demo2.jpg" alt="demo2" width="230">
+<img src=".github/image/demo3.jpg" alt="demo2" width="230">
+</div>
+
 ## 构建与发布
 
 使用与 CI 一致的 JDK 25、Android SDK 37、NDK 28.2.13676358 和 Go 1.27.1；
