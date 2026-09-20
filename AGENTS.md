@@ -10,13 +10,15 @@
 
 ## 1. 项目是什么
 
-一个 Android 应用（API 26–37），让**已由 KernelSU 明确授权本应用使用 `su`** 的手机提供：
+系统启动助手（NetBoot）是一个 Android 应用（API 26–37），让**已由 KernelSU 明确授权本应用使用 `su`** 的手机提供：
 
 1. **PXE 网络启动服务** —— 通过手机现有局域网接口，用 DHCP / ProxyDHCP + TFTP + HTTP Boot + iPXE 给同一网络内的 PC 提供网络引导。
 2. **USB 安装介质** —— 把应用私有目录中的镜像临时映射成只读 USB 存储，供 PC 引导。
 3. **镜像获取与管理** —— 微软官方 ISO 临时链接获取、多连接断点下载、本地导入、SHA-256 与状态管理。
 
-数据流：`获取镜像 → 下载或导入 → 选择 PXE/USB → 启动服务 → 使用 → 安全停止并恢复手机状态`。
+USB 数据流：`下载或导入镜像 → 制作或复用介质 → 启用 → 使用 → 停止并恢复 USB`。
+PXE 数据流：`选择接口与模式 → 配置启动文件和脚本 → 启动 → 使用 → 停止`。
+镜像库与 PXE 文件目录独立，下载或导入 ISO 不会自动生成 PXE 安装源。
 
 必须做成可发布、可持续维护的正式产品：**不接受 Demo、原型、占位实现、假数据、只覆盖成功
 路径或需要开发者手工收尾的流程。**
@@ -27,8 +29,8 @@
 | --- | --- |
 | **KernelSU 已授权本应用**（App Profile / 授权列表允许 `com.sky22333.netboot` 使用 `su`） | ✅ 唯一受支持配置 |
 
-应用首次启动**只检测**现有 Root 环境。没有 KernelSU、授权被拒或 Profile 能力不足时，
-展示具体原因与进入 KernelSU Manager 的提示，**不尝试安装或修补 KernelSU**。
+应用启动时自动检测现有 Root 和 USB 配置。权限不可用时提示检查 KernelSU 授权，
+**不尝试安装或修补 KernelSU**。
 
 ---
 
@@ -58,9 +60,9 @@
 
 - **任何特权路径写入（包含从状态文件读回的路径）必须先过 `ConfigfsGuard` 的 canonical
   校验**；校验失败一律拒绝执行，**不得降级为"尽力而为"**。
-- native 侧（`app/src/main/cpp/media.cpp`）只允许操作**调用方传入的、已验证为普通文件的
-  文件描述符**：`disk_initialize` 拒绝非 0 的 drive，且构建入口断言 `getuid() != 0`。
-  媒体制作全程在**非 root 的应用进程**内完成。
+- native 侧（`app/src/main/cpp/media.cpp`）通过调用方传入、验证为普通文件的描述符读写输入与输出，
+  临时文件仅在调用方校验后的私有工作目录生成。`disk_initialize` 拒绝非 0 的 drive，
+  构建入口断言 `getuid() != 0`；媒体制作全程在**非 root 的应用进程**内完成。
 - 设备若无法在上述边界内完成能力，必须明确显示"此设备不支持"。
 
 ---
@@ -71,12 +73,14 @@
 | --- | --- |
 | minSdk / compileSdk / targetSdk | 26 / 37 / 37 |
 | Kotlin & JVM target | 2.4.20 / JVM 17 |
+| CI 构建 JDK | 25 |
 | AGP / Gradle | 9.4.0 / 9.7.1 |
 | NDK（AGP 与 gomobile 共用同一常量） | 28.2.13676358 |
 | Go | 1.27.1 |
 | 发布 ABI | `arm64-v8a`、`armeabi-v7a`（`x86_64` 仅供模拟器） |
 
-依赖版本**只在 `gradle/libs.versions.toml` 声明**，模块脚本不得散落版本号，禁止 `+`、
+Android 依赖版本**只在 `gradle/libs.versions.toml` 声明**；Go 依赖由 `core-go/go.mod` 固定，
+native 源码下载地址与哈希集中在 `app/src/main/cpp/dependencies.cmake`。禁止 `+`、
 `latest.release`、SNAPSHOT、Alpha、Beta、RC、EAP 与预发布组件。
 
 升级依赖：核实官方最新**稳定**版 → 读目标版本源码/迁移说明 → 单独提交并更新元数据 →
@@ -87,18 +91,22 @@
 
 ## 4. 代码结构
 
-只有三个构建模块，**禁止** `core`/`common`/`utils`/`domain`/`base` 这类无业务所有权的抽象模块。
+Gradle 仅包含 `:app`；`core-go` 是独立 Go 模块，`buildSrc` 提供构建任务。
+**禁止**新增 `core`/`common`/`utils`/`domain`/`base` 这类无业务所有权的抽象模块。
 
 ```text
-app/                Kotlin 产品代码
+app/src/main/java/com/sky22333/netboot/
   MainActivity.kt     单 Activity + Compose，四个一级页面 + 脚本编辑器
   MainViewModel.kt
-  data/               Room、DataStore、镜像与启动文件仓库、微软目录 API、媒体布局
-  download/           DownloadRepository（分片段下载）、DownloadService、RemoteFileProbe
-  root/               BrokerProtocol、RootBrokerClient/Main、ConfigfsGuard、UsbGadgetController
-  runtime/            RuntimeRepository（会话编排）、RuntimeService（前台服务）、DhcpPoolAllocator
-  cpp/                media.cpp + CMakeLists（UDF 读取 → FAT32 生成 → WIM 拆分）
-core-go/mobilecore/   精简后的 Go 核心与 gomobile 导出（DHCP/TFTP/HTTP/事件/路径校验）
+  PxeFormState.kt     接口、地址池与脚本的编辑状态
+  data/              Room、DataStore、镜像与启动文件、微软目录、媒体布局
+  download/          下载仓库、前台服务与远端文件探测
+  root/              Root Broker、configfs 白名单、USB 控制
+  runtime/           会话编排、前台服务与 DHCP 地址池
+app/src/main/cpp/    media.cpp、CMakeLists.txt、dependencies.cmake
+app/schemas/com.sky22333.netboot.data.AppDatabase/1.json
+core-go/mobilecore/  Go 核心与 gomobile 导出（DHCP/TFTP/HTTP/事件/路径校验）
+buildSrc/           Go AAR 构建与 ABI 校验任务
 gradle/libs.versions.toml
 .github/workflows/    发布流水线
 ```
@@ -106,11 +114,11 @@ gradle/libs.versions.toml
 ### 数据流与职责
 
 ```text
-Miuix Screen → ViewModel → Repository / RuntimeController
+Miuix Screen → MainViewModel → Repository / Service
                                ├─ Room / DataStore / OkHttp
                                ├─ DownloadService
                                └─ Root Broker → Go AAR / configfs
-                            ← StateFlow<UiState>
+                            ← StateFlow（运行状态、配置、镜像、任务、事件）
 ```
 
 - UI 只渲染不可变 `UiState` 并上报事件；Composable 无副作用。
@@ -137,12 +145,12 @@ Stop() -> error
 StatusJSON() -> String
 ```
 
-**没有 `ReloadMenu`**：iPXE 脚本作为 `config.ipxeScript` 随配置传入，运行中不维护第二份可变配置。
+iPXE 脚本作为 `config.ipxeScript` 随配置传入；修改配置后需重新启动 PXE 才生效。
 
 - 不跨 JNI 暴露 Go struct / map / channel / context / 文件对象。
 - Listener 只发**事件码 + 结构化参数**，不发成品文本；由 Kotlin 本地化。
 - 高频进度与日志必须合并，禁止每包/每块跨 JNI 回调。
-- `Start` 幂等：已运行时返回明确状态，不隐式重启。`Stop` 取消根 context、关闭 socket 与
+- `Start` 在已运行时返回错误，不隐式重启。`Stop` 可重复调用，取消根 context、关闭 socket 与
   HTTP server 并等待 goroutine 退出。
 - Go 核心不认识 Android UI、Room、下载任务或本地化。
 - 协议要求：DHCP 两种互斥模式；启动时仅校验配置与绑定端口，**不探测现有 DHCP 服务器、不绑定客户端 UDP 68 端口**；完整 DHCP 由用户确认在隔离网络使用；TFTP 支持 RRQ/重传/
@@ -156,7 +164,7 @@ StatusJSON() -> String
 
 ### 5.2 Root Broker
 
-Broker 与主应用在**同一个签名 APK** 内，由 `RuntimeService` 用**编译期常量**命令启动一个
+Broker 与主应用在**同一个签名 APK** 内，由 `RootBrokerClient` 启动一个
 最小 `app_process`；从自身 APK/安装目录直接加载类与 native 库，**不向可写目录释放或动态
 加载可执行代码**。通信走 Android abstract `LocalSocket` 的长度前缀 JSON，**校验 peer UID**。
 
@@ -167,13 +175,13 @@ probe  startNetwork  stopNetwork  attachReadOnlyIso  detachIso  status  shutdown
 ```
 
 **禁止** `runCommand`、`executeShell`、任意路径 `readFile/writeFile`、任意 mount 或任意
-system property 操作。主进程断开、主动停止或收到终止信号时，必须停止 Go 服务并**优先恢复
-USB 运行状态**。
+system property 操作。主动关闭或本地 socket 断开后，Broker 在退出路径中停止 Go 并尝试恢复 USB；
+USB 清理不依赖 Go 停止成功。强制终止进程或内核异常不保证执行清理，恢复记录保留供下次连接使用。
 
 ### 5.3 USB 安装介质
 
-探测**只读**（`/config/usb_gadget`、`/sys/kernel/config/usb_gadget`、UDC、当前 gadget/config/
-function、`mass_storage` 可用性、镜像是否为私有目录内的普通文件），**不得为了探测而写**。
+探测**只读**检查 configfs、UDC、当前 gadget/config 和配置可写性，**不得为了探测而写**。
+`mass_storage` function 是否能创建在启用阶段确认；探测通过不等于实际启用或电脑启动成功。
 
 挂载流程：
 
@@ -181,20 +189,23 @@ function、`mass_storage` 可用性、镜像是否为私有目录内的普通文
 2. 显示确认：USB 数据连接会暂时断开，ADB/MTP 可能消失，介质严格只读。
 3. 需要转换的 Windows UDF ISO 先在**非 root 进程**中制作私有 FAT32 镜像；超过单文件上限的
    WIM 由 wimlib 拆分。**原始 ISO 不变**，制作须显示真实阶段与进度并支持取消。
-4. 临时解绑 UDC，创建独立 `mass_storage` function。
+4. 记录恢复状态，创建本应用的 `mass_storage` function 并配置 LUN；验证后临时解绑 UDC 并加入配置。
 5. **LUN 始终 `ro=1`**。容量与形态决定 `cdrom`：
    - ≤ `2,359,293,952` 字节（`256*60*75-1` 个 2048 字节块）且通过光盘结构检查 → `cdrom=1`；
    - 通过磁盘布局检查的混合 ISO，或应用制作的 FAT32 镜像 → `cdrom=0`；
    - **禁止把普通 Windows ISO 当磁盘直接映射**；超限的非混合 Linux ISO 明确报不支持，
      不得绕过内核容量边界。
-6. 绑定 UDC 并回报主机连接状态；停止/异常断开/会话结束时解绑、清理本应用创建的节点并
-   恢复原始 gadget 配置。
+6. 绑定 UDC 并回报主机连接状态；主动停止或 Broker 会话结束时解绑、清理本应用创建的节点并
+   恢复原始 gadget 配置。拔线事件只刷新连接状态，不等于停止或恢复。
+
+已完成的制作结果按源镜像 SHA-256 复用；制作前要求可用空间不少于 ISO 大小的 5 倍加 512 MiB。
+生成的 Windows FAT32 安装盘面向 UEFI，不包含传统 BIOS 引导代码。
 
 只允许操作**当前 gadget 下本应用创建或快照记录**的节点。backing file 位于 `/dev`、是块设备、
 符号链接或不在受管目录，一律拒绝。
 
-**兼容性由真实 UDC、OEM gadget 驱动与 PC UEFI 决定**，UI 必须区分：不支持 / 可配置 /
-已映射 / 主机已连接 / 恢复失败。
+**兼容性由真实 UDC、OEM gadget 驱动、镜像和 PC 固件决定**，UI 区分不支持、已停止、
+已启用、电脑已连接及恢复失败。不得把未知设备风险归因于“临时 Root”，也不得承诺拔线不会重启。
 
 ### 5.4 镜像下载器
 
@@ -204,11 +215,11 @@ function、`mass_storage` 可用性、镜像是否为私有目录内的普通文
 - 支持 Range 时按闭区间平均分段，`FileChannel` positional write 写入**同一个预分配 `.part`**；
   服务端忽略 Range 或返回 200 时**自动降为单连接**，不并行重复下载。
 - 远端身份（总长 + ETag/Last-Modified）变化必须要求重新下载，不允许把不同版本拼在一起。
-- 进度写内存可高频，UI/通知节流；数据库按 2 s 或每段 8 MiB 检查点。
+- 进度写内存，下载期间每 2 s 更新 UI/通知并批量保存分段检查点；退出传输时保存最终检查点。
 - 暂停保留 `.part` 与段状态；取消由用户选择是否删除临时文件。
 - 完成后校验总长度 → 算 SHA-256 → 原子重命名 → 状态置 Ready。
 - **没有微软官方哈希时，SHA-256 只作为本地身份与损坏检测，不得声称"已验证微软签名"。**
-- 4xx 不无限重试；瞬时网络错误最多 3 次指数退避并带 jitter。
+- 4xx 不无限重试；每段 IO 失败最多尝试 3 次，重试使用指数退避并带 jitter。
 - 全部流式处理，禁止把镜像或大块响应完整载入内存。
 
 下载由用户显式启动的 `DownloadService`（`dataSync` 前台服务）执行。
@@ -251,8 +262,11 @@ function、`mass_storage` 可用性、镜像是否为私有目录内的普通文
 cd core-go && gofmt -l . && go vet ./... && go test -race ./...
 ```
 
+Go race 需要 CGO 和兼容的本机 C 编译器。Windows 可在当前 PowerShell 进程设置
+`$env:CGO_ENABLED='1'` 和 `$env:CC='编译器绝对路径'` 后执行；不要用 `go env -w` 修改全局配置。
+
 **注意**：`app/libs/netboot-core.aar` 不在版本管理内，由 `preBuild → verifyGoAar` 自动构建并
-**校验 ABI**（缺任一发布 ABI 或混入 x86_64 即失败）。构建任务自行按 go.mod 固定版本把
+**校验 ABI**（必须与 `netbootAbis` 完全一致；默认发布仅含两个 ARM ABI）。构建任务自行按 go.mod 固定版本把
 `gobind` 装到构建目录并置于 PATH 首位；**不要手工 `go install` 到全局 `GOPATH/bin`**——
 `gomobile bind` 只按 PATH 查找 gobind，全局那份会因版本不匹配而悄悄改变产物。
 
@@ -262,7 +276,8 @@ cd core-go && gofmt -l . && go vet ./... && go test -race ./...
 2. `go test -race ./...` 与 `gofmt`、`go vet`。
 3. `assembleRelease` 成功，AAR 覆盖两个发布 ABI。
 4. **导出的 Room schema 必须已提交**：`git diff --exit-code -- app/schemas` 干净；
-   migration 必须显式且可测，生产构建禁止 destructive migration。
+   当前数据库版本为 1，仅保留标准生成目录中的 `1.json`，无旧版本迁移代码。
+   正式发布后的 schema 升级必须提供显式、可测的迁移，生产构建禁止 destructive migration。
 5. 新功能带完整中英文资源、加载/空/错误/恢复交互与自动化测试。
 6. Root/configfs 改动必须经过安全边界审查。
 7. **不降低测试、不关闭警告、不加临时兼容分支来换取通过。**
@@ -271,13 +286,13 @@ cd core-go && gofmt -l . && go vet ./... && go test -race ./...
 
 - 日常修复默认仅执行必要的本地测试、Lint 和构建；构建成功后不自动启动模拟器或连接真机验证。设备验证仅在用户明确要求时执行，未验证的设备行为如实报告。
 
-- **CI 只跑纯 JVM 单测与 Go 测试**；需要设备的 instrumented 测试（数据库、native 媒体生成）
+- **CI 执行 JVM 单测、Go race/vet/gofmt、Lint、schema 检查和 Release 构建**；需要设备的 instrumented 测试（数据库、native 媒体生成）
   由开发者在真机/模拟器上跑，见上表命令。
 - `TestNetworkStartWithClientPortOccupied` 仅在具备低端口绑定权限的专用 Linux/模拟器上，以 `NETBOOT_NETWORK_TEST=1` 显式启用；它会占用 UDP 67/68/69/4011，禁止在真实业务网络运行。
 - `root/` 相关测试必须**注入测试根目录**，针对临时目录执行；**CI 永不触碰真实 `/config`、
   `/sys`、`/dev`**。
-- 静态门禁扫描特权源码，出现 `/dev/block`、分区名、`dd`、`mkfs`、`setenforce`、可写 mount、
-  `persist.*` 即失败。
+- 特权源码审查必须检查第 2 节禁止的路径与操作；当前 CI 没有独立的特权命令扫描器，
+  不得将 Lint 或单元测试通过视为完成安全审查。
 - 真机只在专用设备上执行：验证映射、PC UEFI 枚举、只读属性、拔线、应用停止、主进程崩溃、
   授权撤销与恢复原 USB 组合。**真机测试不得写分区、不得改 SELinux 全局状态、不得把测试
   镜像指向块设备。**
@@ -290,9 +305,12 @@ cd core-go && gofmt -l . && go vet ./... && go test -race ./...
 必须输入发布 tag。
 
 一次运行内按序完成：静态检查 → 单元测试 → R8 Release → PKCS#12 签名与验签 →
-`softprops/action-gh-release` 通过 API 创建 release 与 tag 并发布**签名 APK 与 mapping 文件**。
-不要改回 `git tag` + `gh release create`：runner 上没有任何 git 身份，`git tag --annotate`
-会直接以 `empty ident name` 失败。
+`softprops/action-gh-release` 通过 API 创建 release 与 tag，当前上传 `dist/*.apk`。
+R8 mapping 在构建目录生成，但当前流水线不上传；正式发布前仍须落实下述产物留存要求。
+发布仅允许从 `main` 最新提交进行，tag 必须尚不存在。
+
+CI 通过 `-PnetbootVersionName` 注入去掉前缀 `v` 的 tag；本地默认 `1.0.0`。
+关于弹窗读取 `BuildConfig.VERSION_NAME`，点击版本号打开项目 GitHub 仓库。
 
 签名 Secrets（仓库 Actions Secrets）：`SIGNING_KEY_BASE64`（完整 `.p12` 的 Base64）、
 `KEY_ALIAS`、`KEY_STORE_PASSWORD`、`KEY_PASSWORD`。**缺任一项必须明确失败，不回退 Debug 签名。**

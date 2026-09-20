@@ -349,7 +349,7 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
             }
         }
         if (state.usbAttached) {
-            item { HintCard(stringResource(R.string.usb_attached_warning), warning = true) }
+            item { HintCard(usbHostConnectedText(state.usbHostConnected), warning = true) }
         }
         if (state.usbPreparing || state.usbAttached || state.usbRecoveryRequired || state.networkRunning) item { RuntimeControls(viewModel) }
         item { SectionTitle(stringResource(R.string.quick_actions)) }
@@ -361,7 +361,6 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
         }
         state.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), warning = true) } }
         item { CompactButton(viewModel::refreshCapabilities, Modifier.fillMaxWidth(), enabled = !state.busy) { Text(stringResource(R.string.refresh_capabilities)) } }
-        item { Text(stringResource(R.string.home_tip), color = MiuixTheme.colorScheme.onBackgroundVariant, fontSize = 12.sp) }
     }
 }
 
@@ -493,7 +492,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                 Text(downloadStateText(task.state), fontSize = 13.sp)
                 if (task.totalBytes > 0) {
                     LinearProgressIndicator(progress = (task.downloadedBytes.toFloat() / task.totalBytes).coerceIn(0f, 1f))
-                    Text(stringResource(R.string.download_progress, formatBytes(task.downloadedBytes), formatBytes(task.totalBytes)), fontSize = 12.sp)
+                    Text(stringResource(R.string.transfer_progress, formatBytes(task.downloadedBytes), formatBytes(task.totalBytes)), fontSize = 12.sp)
                 }
                 task.errorCode?.let { Text(runtimeErrorText(it), fontSize = 12.sp, color = MiuixTheme.colorScheme.error) }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -537,7 +536,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                     Text(stringResource(if (progress.verifying) R.string.state_verifying else R.string.state_importing), fontSize = 13.sp)
                     if (progress.total > 0) {
                         LinearProgressIndicator(progress = (progress.bytes.toFloat() / progress.total).coerceIn(0f, 1f))
-                        Text(stringResource(R.string.download_progress, formatBytes(progress.bytes), formatBytes(progress.total)), fontSize = 12.sp)
+                        Text(stringResource(R.string.transfer_progress, formatBytes(progress.bytes), formatBytes(progress.total)), fontSize = 12.sp)
                     } else Text(formatBytes(progress.bytes), fontSize = 12.sp)
                     CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), { viewModel.cancelImport(asset.id) })
                 }
@@ -576,7 +575,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CompactButton({ pendingAttach = null }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
-            CompactButton({ pendingAttach?.let(viewModel::attachIso); pendingAttach = null }, Modifier.weight(1f)) { Text(stringResource(R.string.confirm)) }
+            CompactButton({ pendingAttach?.let(viewModel::attachIso); pendingAttach = null }, Modifier.weight(1f)) { Text(stringResource(R.string.usb_confirmation_action)) }
         }
     }
     OverlayDialog(
@@ -618,7 +617,7 @@ private fun PreparationProgress(state: RuntimeState) {
         Text(stringResource(label), fontSize = 13.sp)
         if (state.preparationTotal > 0) {
             LinearProgressIndicator(progress = (state.preparedBytes.toFloat() / state.preparationTotal).coerceIn(0f, 1f))
-            Text(stringResource(R.string.download_progress, formatBytes(state.preparedBytes), formatBytes(state.preparationTotal)), fontSize = 12.sp)
+            Text(stringResource(R.string.transfer_progress, formatBytes(state.preparedBytes), formatBytes(state.preparationTotal)), fontSize = 12.sp)
         }
     }
 }
@@ -1112,16 +1111,15 @@ private fun runtimeErrorText(code: String): String = stringResource(
         "tftp_port_unavailable" -> R.string.runtime_error_tftp_port
         "dhcp_port_unavailable" -> R.string.runtime_error_dhcp_port
         "usb_restore_failed" -> R.string.runtime_error_usb_restore
-        // Reuse probe messages for attach failures with the same reason code.
         "configfs_unavailable", "configfs_not_writable", "udc_unavailable",
-        "active_gadget_unavailable", "gadget_read_only", "mass_storage_unsupported", "usb_unsupported",
+        "active_gadget_unavailable", "gadget_read_only",
         -> R.string.runtime_error_usb_unsupported
-        "lun_node_missing", "cdrom_attribute_missing", "function_create_failed" -> R.string.runtime_error_usb_lun
-        "function_link_failed", "usb_attach_failed", "usb_unbind_failed" -> R.string.runtime_error_usb_link
-        "backing_file_rejected", "backing_file_mismatch" -> R.string.runtime_error_usb_backing
+        "lun_node_missing" -> R.string.runtime_error_usb_lun
+        "usb_attach_failed", "usb_unbind_failed" -> R.string.runtime_error_usb_link
+        "backing_file_mismatch" -> R.string.runtime_error_usb_backing
         "media_large_nonhybrid", "media_optical_limit" -> R.string.media_large_nonhybrid
         "media_storage_required", "insufficient_storage" -> R.string.media_storage_required
-        "media_invalid_iso" -> R.string.media_invalid_download
+        "media_invalid_iso" -> R.string.media_invalid_image
         "media_udf_unreadable", "media_windows_layout" -> R.string.media_windows_layout
         "media_invalid_disk", "media_not_regular", "media_source_changed", "media_not_windows" -> R.string.media_invalid
         "media_file_too_large" -> R.string.media_file_too_large
@@ -1140,7 +1138,6 @@ private fun usbCapabilityReason(code: String?): String = stringResource(
         "udc_unavailable" -> R.string.usb_reason_udc
         "active_gadget_unavailable" -> R.string.usb_reason_no_active_gadget
         "gadget_read_only" -> R.string.usb_reason_gadget_readonly
-        "mass_storage_unsupported" -> R.string.usb_reason_mass_storage
         else -> R.string.runtime_error_usb_unsupported
     },
 )
@@ -1154,13 +1151,14 @@ private fun usbInstallerSummary(attached: Boolean, hostConnected: Boolean, unsup
 }
 
 @Composable
-private fun usbHostConnectedText(hostConnected: Boolean): String = stringResource(
-    if (hostConnected) R.string.usb_attached_connected_warning else R.string.usb_attached_warning,
-)
+private fun usbHostConnectedText(hostConnected: Boolean): String =
+    stringResource(if (hostConnected) R.string.usb_state_host_connected else R.string.usb_state_mapped) +
+        "\n" + stringResource(R.string.usb_attached_warning)
 
 private fun messageResource(code: String): Int = when (code) {
     "import_complete" -> R.string.import_complete
-    "media_invalid_iso", "empty_source", "not_iso" -> R.string.media_invalid_download
+    "media_invalid_iso", "not_iso" -> R.string.media_invalid_image
+    "empty_source" -> R.string.empty_source
     "source_unavailable" -> R.string.source_unavailable
     "size_mismatch" -> R.string.download_integrity_failed
     "invalid_dhcp_pool" -> R.string.runtime_error_dhcp_pool

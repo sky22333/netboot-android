@@ -145,7 +145,7 @@ class DownloadService : Service() {
         return NotificationCompat.Builder(this, ChannelId)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(if (verifying) R.string.state_verifying else R.string.download_running))
-            .setContentText(if (total > 0) getString(R.string.download_progress, formatBytes(downloaded), formatBytes(total)) else null)
+            .setContentText(if (total > 0) getString(R.string.transfer_progress, formatBytes(downloaded), formatBytes(total)) else null)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setProgress(100, progress, total <= 0)

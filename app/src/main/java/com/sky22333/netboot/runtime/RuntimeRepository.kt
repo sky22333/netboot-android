@@ -323,15 +323,9 @@ class RuntimeRepository @Inject constructor(
             "asset_not_found",
             "unsupported_boot_mode",
             "usb_restore_failed",
-            "usb_unsupported",
             "usb_attach_failed",
             "usb_unbind_failed",
-            "mass_storage_unsupported",
             "lun_node_missing",
-            "cdrom_attribute_missing",
-            "function_create_failed",
-            "function_link_failed",
-            "backing_file_rejected",
             "backing_file_mismatch",
         )
     }
