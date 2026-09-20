@@ -66,7 +66,6 @@ data class RuntimeState(
     val preparationStage: UsbPreparationStage = UsbPreparationStage.CopyFiles,
     val usbDiskMode: Boolean = false,
 ) {
-    /** True when USB installation media cannot be provided on this device or in this state. */
     val usbUnsupported: Boolean get() = usbCapability?.supported == false
 }
 
@@ -162,7 +161,6 @@ class RuntimeRepository @Inject constructor(
         )
     }
 
-    /** Refreshes whether the host finished enumerating the exposed LUN. */
     suspend fun refreshUsbConnection() {
         if (!mutableState.value.usbAttached) return
         val connected = runCatching { broker.usbHostConnected() }.getOrDefault(false)
@@ -219,9 +217,7 @@ class RuntimeRepository @Inject constructor(
                 usbRecoveryRequired = mutableState.value.usbRecoveryRequired || code == "usb_restore_failed",
                 activeIsoId = if (operation == "attach_usb" && code != "usb_restore_failed" && !mutableState.value.usbAttached) null else mutableState.value.activeIsoId,
             )
-            // USB and root failures carry device-specific details that are not reproducible off the
-            // device, so the full text goes to logcat as well as to the event log. The UI only shows
-            // the localized code, which is not enough to diagnose a refusal from the kernel.
+            // Log device-specific details; the UI displays only the localized error code.
             Log.w(LogTag, "$operation failed: code=$code detail=${error.message}")
             insertEvent(
                 severity = "error",
@@ -233,13 +229,7 @@ class RuntimeRepository @Inject constructor(
         mutableState.value = mutableState.value.copy(busy = false)
     }
 
-    /**
-     * Maps a failure to the stable code the UI localizes, and returns the full text for the log.
-     *
-     * The broker and the app share one set of codes, so [BrokerException.code] is authoritative.
-     * USB failures append `:detail` to the code so the log explains what was refused; the UI only
-     * needs the part before the separator.
-     */
+    /** Preserve broker error codes for the UI and full failure details for logs. */
     private fun normalizeError(error: Throwable): String {
         val brokerCode = (error as? BrokerException)?.code
         val message = brokerCode?.takeIf { it.isNotBlank() } ?: error.message ?: return "runtime_failure"
@@ -264,8 +254,7 @@ class RuntimeRepository @Inject constructor(
             code = code,
             argumentsJson = event["arguments"]?.toString() ?: "{}",
         )
-        // A failed USB recovery means the phone is not in its original configuration. It has to be
-        // visible on the home screen, not only in the log, because the user must act on it.
+        // Expose recovery failures in UI state so the user can restore USB.
         if (code == "usb_restore_failed") {
             mutableState.value = mutableState.value.copy(errorCode = code, usbRecoveryRequired = true, usbHostConnected = false)
         }
@@ -289,12 +278,6 @@ class RuntimeRepository @Inject constructor(
         database.runtimeEventDao().prune(System.currentTimeMillis() - EventRetentionMillis, MaxStoredEvents)
     }
 
-    /**
-     * Builds the configuration the Go core starts with.
-     *
-     * The DHCP pool is derived per network by [DhcpPoolAllocator] so that the server can never hand
-     * out its own address, the network address or the broadcast address.
-     */
     private fun BootProfileEntity.toCoreConfig(mode: BootMode, root: File, adapter: NetworkAdapter): CoreConfig {
         val pool = if (mode == BootMode.Dhcp) DhcpPoolAllocator.allocate(
             requestedStart = dhcpPoolStart,
@@ -323,15 +306,11 @@ class RuntimeRepository @Inject constructor(
     }
 
     companion object {
-        /** Logcat tag for operation failures, so device-specific refusals can be captured directly. */
         private const val LogTag = "NetBootRuntime"
 
         private const val MaxStoredEvents = 5000
 
-        /**
-         * Retention limit from the product charter. Enforced on insert rather than by a background
-         * sweep so an idle app never wakes up just to prune logs.
-         */
+        /** Prune on insert to avoid idle background work. */
         private const val EventRetentionMillis = 7L * 24 * 60 * 60 * 1000
         private const val DefaultLeaseSeconds = 86400
 

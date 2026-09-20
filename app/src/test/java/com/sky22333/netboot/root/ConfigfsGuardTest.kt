@@ -7,10 +7,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
-/**
- * The guard is the last line of defence for the "never touch a partition" rule: every privileged
- * configfs write goes through it, including the paths read back from the on-device state file.
- */
+/** Tests the configfs boundary, including paths restored from persisted state. */
 class ConfigfsGuardTest {
     @TempDir
     lateinit var temporary: Path
@@ -57,7 +54,6 @@ class ConfigfsGuardTest {
 
     @Test
     fun `refuses everything when configfs is not available`() {
-        // An empty allow-list models a device whose kernel provides no gadget configfs at all.
         assertThrows(IllegalStateException::class.java) {
             ConfigfsGuard.requireGadget(File(temporary.toFile(), "anything"), emptyList())
         }

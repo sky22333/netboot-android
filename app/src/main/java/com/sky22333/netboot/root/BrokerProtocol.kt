@@ -21,10 +21,7 @@ data class BrokerMessage(
 @Serializable
 data class AttachIsoRequest(val isoPath: String, val cdrom: Boolean)
 
-/**
- * Broker-originated runtime event. Mirrors the Go core's event shape so RuntimeRepository can
- * persist both through one path; [code] plus [arguments] are the only localization input.
- */
+/** Shares the Go event format; the app localizes [code] and [arguments]. */
 @Serializable
 data class BrokerEvent(
     val timestamp: Long,
@@ -43,7 +40,6 @@ data class BrokeredNetworkStatus(
     val startedAt: Long = 0,
 )
 
-/** Payload of [BrokerOperation.Status]; mirrors what `RootBrokerMain` reports. */
 @Serializable
 data class BrokerStatus(
     val network: BrokeredNetworkStatus = BrokeredNetworkStatus(),
@@ -51,10 +47,7 @@ data class BrokerStatus(
     val usbHostConnected: Boolean = false,
 )
 
-/**
- * Result of the read-only USB probe: whether this app can add a read-only optical drive to the
- * device's live USB gadget, plus a stable code explaining why not when it cannot.
- */
+/** Read-only gadget capability probe with a stable failure code. */
 @Serializable
 data class UsbCapability(
     val supported: Boolean,

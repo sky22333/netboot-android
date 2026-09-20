@@ -22,7 +22,6 @@ class RootBrokerProtocolTest {
     @Test
     fun `privileged source contains no forbidden mutation primitive`() {
         val source = privilegedSource()
-        // Every one of these would cross the immutable safety boundary in AGENTS.md.
         val forbidden = listOf(
             "/dev/block",
             "mkfs",
@@ -53,8 +52,7 @@ class RootBrokerProtocolTest {
 
     @Test
     fun `injecting the gadget roots also narrows the guard`() {
-        // If the guard used a hardcoded root while the controller used an injected one, tests would
-        // exercise a different boundary than production.
+        // The controller and guard must share the injected configfs root.
         assertTrue(privilegedSource().contains("candidateRoots.map { it.absolutePath }"))
     }
 

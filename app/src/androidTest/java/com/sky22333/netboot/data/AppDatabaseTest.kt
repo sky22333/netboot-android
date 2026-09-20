@@ -2,40 +2,20 @@ package com.sky22333.netboot.data
 
 import android.content.Context
 import androidx.room.Room
-import androidx.room.testing.MigrationTestHelper
-import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * Verifies the constraints the download and image state machines rely on: foreign keys cascade,
- * event retention is bounded, and an asset that is still downloading cannot be deleted.
- *
- * Room validates the committed schema (`app/schemas`) on every open, so this also guards against an
- * undocumented schema change shipping unnoticed.
- */
 @RunWith(AndroidJUnit4::class)
 class AppDatabaseTest {
-    @get:Rule
-    val migrationHelper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
-        AppDatabase::class.java,
-        emptyList(),
-        FrameworkSQLiteOpenHelperFactory(),
-    )
-
     private lateinit var database: AppDatabase
 
     @Before
@@ -49,31 +29,6 @@ class AppDatabaseTest {
     @After
     fun closeDatabase() {
         database.close()
-    }
-
-    @Test
-    fun migrationFromV1PreservesProfilesAndBlanksThePool() {
-        migrationHelper.createDatabase(DatabaseName, 1).use { legacy ->
-            legacy.execSQL(
-                """
-                INSERT INTO boot_profiles
-                    (id, name, mode, interfaceName, listenAddress, advertiseAddress, httpPort, bootFile, menuJson, updatedAt)
-                VALUES ('default', 'Default', 'proxy', 'wlan0', '192.168.1.50', '192.168.1.50', 8080, 'ipxe-x86_64.efi', '#!ipxe\nshell', 42)
-                """.trimIndent(),
-            )
-        }
-
-        val migrated = migrationHelper.runMigrationsAndValidate(DatabaseName, 2, true, AppDatabase.Migration1To2)
-        migrated.query("SELECT mode, httpPort, dhcpPoolStart, dhcpPoolEnd FROM boot_profiles").use { cursor ->
-            assertTrue(cursor.moveToFirst())
-            assertEquals("proxy", cursor.getString(0))
-            assertEquals(8080, cursor.getInt(1))
-            // Blank means "derive a safe pool for the selected network at runtime"; no subnet is
-            // assumed for a profile that predates the column.
-            assertEquals("", cursor.getString(2))
-            assertEquals("", cursor.getString(3))
-        }
-        migrated.close()
     }
 
     @Test
@@ -202,8 +157,4 @@ class AppDatabaseTest {
         eventCode = code,
         argumentsJson = "{}",
     )
-
-    private companion object {
-        const val DatabaseName = "migration-test.db"
-    }
 }

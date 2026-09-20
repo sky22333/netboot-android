@@ -1,18 +1,14 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(netboot_media LANGUAGES C CXX)
-set(CMAKE_C_STANDARD 99) # Matches wimlib's upstream gnu99 build.
+set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 17)
-include(FetchContent)
+include("${CMAKE_CURRENT_LIST_DIR}/dependencies.cmake")
 include(CheckIncludeFile)
 include(CheckSymbolExists)
 
-# Official stable archives, authenticated by fixed hashes; no executable is downloaded.
-FetchContent_Declare(wim URL https://wimlib.net/downloads/wimlib-1.14.5.tar.gz URL_HASH SHA256=84221a3abd5b91228f15f8e6065c335a336237b5738197b75bf419eea561a194)
-FetchContent_Declare(udf URL https://download.videolan.org/pub/videolan/libudfread/libudfread-1.2.0.tar.xz URL_HASH SHA256=bb477cbd4cfbfc7787d9d05b71ee5e70430f5cfebf1297497f7e83547958050f)
-FetchContent_Declare(fat URL https://elm-chan.org/fsw/ff/arc/ff16.zip URL_HASH SHA256=99f7dc1f7e095356e4a9e3dbe29959090d8b948afe2bbc5441e52fdf4b85449e)
 FetchContent_MakeAvailable(wim udf fat)
 
-set(config "#define PACKAGE_VERSION \"1.14.5\"\n#define VERSION \"1.14.5\"\n#define HAVE_PTHREAD 1\n#define HAVE_STAT_NANOSECOND_PRECISION 1\n")
+set(config "#define PACKAGE_VERSION \"${WIMLIB_VERSION}\"\n#define VERSION \"${WIMLIB_VERSION}\"\n#define HAVE_PTHREAD 1\n#define HAVE_STAT_NANOSECOND_PRECISION 1\n")
 foreach(header alloca.h byteswap.h dlfcn.h endian.h errno.h fcntl.h inttypes.h stdarg.h stddef.h stdint.h stdio.h stdlib.h strings.h string.h sys/file.h sys/stat.h sys/syscall.h sys/times.h sys/types.h sys/xattr.h time.h unistd.h utime.h)
     string(TOUPPER "HAVE_${header}" key)
     string(REGEX REPLACE "[/.]" "_" key "${key}")
@@ -36,13 +32,10 @@ add_library(wim STATIC ${wim_sources})
 target_include_directories(wim PUBLIC "${wim_SOURCE_DIR}/include" PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(wim PRIVATE HAVE_CONFIG_H BUILDING_WIMLIB _GNU_SOURCE _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE)
 target_compile_options(wim PRIVATE -Wno-pointer-sign)
-# Codec/hash loops must remain optimized in the APK used for device testing.
-# Keep symbols and our own debug code while avoiding multi-GB WIM processing at -O0.
+# Avoid unoptimized multi-GB WIM processing in debug builds.
 target_compile_options(wim PRIVATE $<$<CONFIG:Debug>:-O2>)
 
-# CDIMAGE Windows ISOs use nonzero physical partition numbers (e.g. 2989).
-# 1.2.0's entry point incorrectly requests partition zero; its existing -1 selector
-# discovers the sole partition and the partition-map parser validates the reference.
+# Discover CDIMAGE's nonzero UDF partition instead of assuming partition zero.
 file(READ "${udf_SOURCE_DIR}/src/udfread.c" udf_code)
 set(udf_old "_read_vds(input, 0, &vds)")
 string(FIND "${udf_code}" "${udf_old}" udf_patch_offset)
@@ -55,8 +48,7 @@ add_library(udf STATIC "${CMAKE_CURRENT_BINARY_DIR}/udfread.c" "${udf_SOURCE_DIR
 target_include_directories(udf PUBLIC "${udf_SOURCE_DIR}/src")
 target_compile_definitions(udf PRIVATE HAVE_UNISTD_H=1 HAVE_FCNTL_H=1 _FILE_OFFSET_BITS=64)
 
-# FatFs is used only on our newly created file descriptor, never on block devices.
-# Apply the official R0.16 patch-1/patch-2 corrections in an isolated build copy.
+# Apply official FatFs R0.16 patch-1/patch-2 to a build-local copy.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/fat")
 file(READ "${fat_SOURCE_DIR}/source/ff.c" fat_code)
 string(REPLACE "#define MAX_EXFAT" "#define MIN_EXFAT 0x00000100\n#define MIN_FAT12 32\n#define MIN_VOLUME 64\n#define MAX_EXFAT" fat_code "${fat_code}")

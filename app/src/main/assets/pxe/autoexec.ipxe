@@ -3,7 +3,6 @@ isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 600000
 set public-mirror https://mirrors.cernet.edu.cn
 
-# Debian mirror configuration
 set debian-mirror-host mirrors.cernet.edu.cn
 set debian-mirror-dir /debian
 set debian-security-path /debian-security

@@ -183,8 +183,7 @@ enum wimlib_progress_status wimProgress(enum wimlib_progress_msg message, union 
         progress.done = info->split.completed_bytes;
         progress.total = info->split.total_bytes;
     } else if (message == WIMLIB_PROGRESS_MSG_WRITE_STREAMS) {
-        // Split WRITE_STREAMS is per-part and uncompressed; combine compressed
-        // bytes with SPLIT's completed base rather than freezing at the ISO size.
+        // Combine compressed bytes for this part with previously completed split parts.
         if (progress.stage == 3) progress.done = std::min(progress.total, progress.splitBase + info->write_streams.completed_compressed_bytes);
         else { progress.done = info->write_streams.completed_bytes; progress.total = info->write_streams.total_bytes; }
     }
@@ -260,7 +259,7 @@ void build(int input, int output, const std::string& work, Progress& progress, u
         total += e.size;
     }
     require(total < 128ULL*1024*1024*1024, "media_file_too_large");
-    // Reserve room for non-solid export and FAT metadata without allocating a full RAM image.
+    // Reserve sparse image capacity for expanded WIM data and FAT metadata.
     diskBytes = ((total * 2 + 512ULL*1024*1024 + 511) / 512) * 512;
     require(ftruncate(output, static_cast<off_t>(diskBytes)) == 0, "insufficient_storage");
     diskFd = output;
@@ -289,7 +288,7 @@ void build(int input, int output, const std::string& work, Progress& progress, u
     if (large) splitInstall(udf.get(), *large, work, progress, std::min<uint64_t>(3800ULL*1024*1024, fileLimit));
     progress.begin(5);
     require(fsync(output) == 0, "media_write_failed");
-    // Reopen the volume and verify every non-transformed file's length before publishing it.
+    // Remount before verifying copied file lengths.
     require(f_mount(nullptr, "", 0) == FR_OK && f_mount(&fs, "", 1) == FR_OK, "media_verify_failed");
     for (const auto& e : entries) {
         if (e.directory || &e == large) continue;
@@ -302,7 +301,7 @@ void fail(JNIEnv* env, const char* message) {
 }
 }
 
-// The only disk backend is this already-open app-private REGULAR file descriptor.
+// The disk backend accepts only an open app-private regular file.
 extern "C" DSTATUS disk_initialize(BYTE drive) { return drive == 0 && diskFd >= 0 ? 0 : STA_NOINIT; }
 extern "C" DSTATUS disk_status(BYTE drive) { return disk_initialize(drive); }
 extern "C" DRESULT disk_read(BYTE drive, BYTE* buf, LBA_t sector, UINT count) {

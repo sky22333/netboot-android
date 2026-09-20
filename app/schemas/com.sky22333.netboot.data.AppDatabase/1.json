@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "c4471336635053e6bc30fee4f0bbf58d",
+    "identityHash": "fa6b4136c5740ee51fff6c02145eeffc",
     "entities": [
       {
         "tableName": "iso_assets",
@@ -272,7 +272,7 @@
       },
       {
         "tableName": "boot_profiles",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `mode` TEXT NOT NULL, `interfaceName` TEXT NOT NULL, `listenAddress` TEXT NOT NULL, `advertiseAddress` TEXT NOT NULL, `httpPort` INTEGER NOT NULL, `bootFile` TEXT NOT NULL, `menuJson` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `mode` TEXT NOT NULL, `interfaceName` TEXT NOT NULL, `listenAddress` TEXT NOT NULL, `advertiseAddress` TEXT NOT NULL, `httpPort` INTEGER NOT NULL, `bootFile` TEXT NOT NULL, `menuJson` TEXT NOT NULL, `dhcpPoolStart` TEXT NOT NULL, `dhcpPoolEnd` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -325,6 +325,18 @@
           {
             "fieldPath": "menuJson",
             "columnName": "menuJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dhcpPoolStart",
+            "columnName": "dhcpPoolStart",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dhcpPoolEnd",
+            "columnName": "dhcpPoolEnd",
             "affinity": "TEXT",
             "notNull": true
           },
@@ -404,7 +416,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c4471336635053e6bc30fee4f0bbf58d')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fa6b4136c5740ee51fff6c02145eeffc')"
     ]
   }
 }

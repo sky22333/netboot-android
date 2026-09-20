@@ -14,12 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resumeWithException
 
-/**
- * Result of inspecting a remote ISO before downloading it.
- *
- * [rangeSupported] decides whether the multi-connection path may be used at all; [etag] together
- * with [totalBytes] is the remote file identity used to decide whether a partial file can resume.
- */
+/** Range support controls parallelism; length and validators determine resumability. */
 internal data class RemoteMetadata(
     val totalBytes: Long,
     val rangeSupported: Boolean,
@@ -27,12 +22,7 @@ internal data class RemoteMetadata(
     val lastModified: String?,
 )
 
-/**
- * Probes a temporary Microsoft download link without transferring the file.
- *
- * Extracted from the download repository so the parts that fail against real CDNs — redirect
- * chains, ignored Range headers, expired links — can be tested against MockWebServer.
- */
+/** Checks download metadata and Range support without fetching the full ISO. */
 internal class RemoteFileProbe(private val client: OkHttpClient) {
 
     /** Cancels both the request and a blocked response read when a transfer is paused. */
@@ -85,10 +75,7 @@ internal class RemoteFileProbe(private val client: OkHttpClient) {
         }
     }
 
-    /**
-     * Follows redirects manually so every hop can be re-validated against the Microsoft allow-list;
-     * a configured auto-redirecting client would silently leave that boundary.
-     */
+    /** Validate every redirect against the Microsoft host allow-list. */
     internal fun execute(request: Request, redirects: Int = 0): Response {
         if (redirects > MaxRedirects) throw DownloadException("too_many_redirects")
         MicrosoftHosts.requireOfficial(request.url.toString())

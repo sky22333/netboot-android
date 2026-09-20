@@ -14,13 +14,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 
-/**
- * Asserts the freshly bound gomobile AAR covers the ABIs the app actually ships, then installs it.
- *
- * This exists because an x86_64-only AAR was once committed to `app/libs`: the Kotlin code compiled
- * fine and the failure only appeared at runtime on arm64/arm phones. A missing ABI must fail the
- * build instead.
- */
+/** Reject missing or unexpected ABIs before installing the AAR into app/libs. */
 @CacheableTask
 abstract class VerifyGoAarTask : DefaultTask() {
 

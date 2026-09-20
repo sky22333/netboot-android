@@ -5,10 +5,9 @@
 **/.cxx/
 /.idea/
 /build/
-# Module build output only. A bare `**/build/` would also match source directories whose package is
-# named `build` (e.g. buildSrc/src/main/kotlin/netboot/build/) and silently drop them from commits.
+# Do not ignore source packages named build.
 /*/build/
-# Local artifact copies (e.g. the emulator APK) and the workspace-local AVD.
+# Local artifacts and emulator state.
 /dist/
 /.avd/
 /local.properties
@@ -16,11 +15,7 @@
 *.keystore
 *.p12
 *.pfx
-# Local validation artifacts and local-only regression tests. These are intentionally never
-# restored to the repository: they exercise device- and host-local rigs that a clean CI checkout
-# cannot reproduce. `NativeMediaTest.kt` is deliberately NOT listed here — the FAT32 media
-# generation test is committed, and so is the UDF fixture it reads
-# (`app/src/androidTest/assets/windows-layout.udf`).
+# Host-specific validation rigs; shared tests and fixtures remain tracked.
 /USB-PXE-VALIDATION.md
 /test-support/
 /app/src/androidTest/java/com/sky22333/netboot/MainActivityTest.kt

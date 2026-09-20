@@ -148,8 +148,7 @@ func serveTFTPFile(ctx context.Context, cfg config, sink *eventSink, client net.
 				code = "transfer_peer_stopped"
 				arguments["peerCode"] = strconv.Itoa(int(failure.peerCode))
 				arguments["peerMessage"] = failure.peerMessage
-				// UEFI GetInfo may end a tsize query with ERROR. This is a peer stop,
-				// not proof of either a completed download or an option incompatibility.
+				// UEFI GetInfo may stop a tsize query with ERROR; this does not prove a download failure.
 				if progress.phase == "oack" && request.options["tsize"] == "0" {
 					level = "info"
 				}

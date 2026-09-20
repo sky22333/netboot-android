@@ -463,8 +463,7 @@ func appendOption(packet []byte, code byte, value []byte) []byte {
 	return append(packet, value...)
 }
 
-// bootFileFor resolves the first-stage boot file: an explicit cfg.BootFile wins, otherwise it
-// follows the client architecture. An empty result means no image is bundled for that client.
+// bootFileFor selects the iPXE script, explicit file or architecture default, in that order.
 func bootFileFor(options map[byte][]byte, cfg config) string {
 	if len(options[175]) > 0 || strings.Contains(strings.ToLower(string(options[77])), "ipxe") {
 		return "http://" + net.JoinHostPort(cfg.AdvertiseIP, strconv.Itoa(cfg.HTTPPort)) + "/boot.ipxe"
@@ -475,7 +474,7 @@ func bootFileFor(options map[byte][]byte, cfg config) string {
 	return bundledBootFile(clientArchitecture(options))
 }
 
-// bundledBootFile maps a client architecture to the image bundled for it; empty means none.
+// bundledBootFile returns empty for unsupported architectures.
 func bundledBootFile(architecture string) string {
 	switch architecture {
 	case "bios":

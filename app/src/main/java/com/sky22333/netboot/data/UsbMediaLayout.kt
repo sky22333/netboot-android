@@ -68,7 +68,7 @@ object UsbMediaLayout {
         requireIso(file)
     }
 
-    /** ISO9660 and UDF volume recognition; file size and a self-computed hash are not validation. */
+    /** Recognizes ISO9660/UDF volumes, not bootability. */
     fun requireIso(file: File) {
         if (file.length() < 300L * 2048 || file.length() % 2048 != 0L) throw IOException("media_invalid_iso")
         RandomAccessFile(file, "r").use { input ->

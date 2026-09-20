@@ -19,9 +19,6 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "netboot.db")
-            // Production builds must never drop user data, so every schema change ships an
-            // explicit migration instead of a destructive fallback.
-            .addMigrations(AppDatabase.Migration1To2)
             .build()
 
     @Provides
@@ -30,12 +27,10 @@ object DatabaseModule {
         OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
-            // Redirects are followed manually so every hop can be re-checked against the
-            // Microsoft host allow-list.
+            // Validate each redirect against the Microsoft host allow-list.
             .followRedirects(false)
             .followSslRedirects(false)
-            // OkHttp defaults to 5 requests per host, which would silently cap the segmented
-            // downloader below the user-selected 8 connections.
+            // Allow all eight download connections; OkHttp defaults to five per host.
             .dispatcher(
                 Dispatcher().apply {
                     maxRequests = MaxDownloadConnections
@@ -44,10 +39,7 @@ object DatabaseModule {
             )
             .build()
 
-    /**
-     * Must match the largest value SettingsRepository accepts for "download connections"; the
-     * segmented downloader maps one OkHttp call to each segment.
-     */
+    /** Keep aligned with the connection choices in SettingsRepository. */
     const val MaxDownloadConnections = 8
 }
 

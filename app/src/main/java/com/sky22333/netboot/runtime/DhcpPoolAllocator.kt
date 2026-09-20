@@ -1,26 +1,11 @@
 package com.sky22333.netboot.runtime
 
-/**
- * Inclusive address range the full-DHCP mode may hand out.
- *
- * The range is deliberately passed to the core as completely separate addresses rather than being
- * inferred from the phone's own address, because a pool that contains the server's own IP makes the
- * server hand out its own address and breaks the network it is serving.
- */
+/** Inclusive DHCP range, separate from the server address. */
 data class DhcpPool(val start: String, val end: String) {
     val size: Int = (DhcpPoolAllocator.toUInt(end) - DhcpPoolAllocator.toUInt(start) + 1).toInt()
 }
 
-/**
- * Derives a DHCP pool for IPv4 prefixes /1 through /30, excluding reserved addresses.
- *
- * Two rules drive this code:
- * 1. The pool must never contain the server's own address, the network address or the broadcast
- *    address. Every candidate is rejected against that reserved set, so editing the configured
- *    range can never make the server hand out its own IP.
- * 2. When the pool is not explicitly configured, a range is derived from the selected network
- *    instead of assuming `192.168.1.x`, which would be wrong on any other subnet.
- */
+/** Derive a pool from the selected subnet, excluding server, network and broadcast addresses. */
 object DhcpPoolAllocator {
     /** Usable hosts are capped so a phone never tries to track a huge lease table. */
     private const val MaxPoolSize = 254

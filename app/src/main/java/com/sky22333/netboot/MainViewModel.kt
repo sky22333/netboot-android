@@ -74,13 +74,10 @@ class MainViewModel @Inject constructor(
     val messages = mutableMessages.asSharedFlow()
 
     init {
-        // Capability detection must not depend on the user finding the button: the home screen shows
-        // Root / PXE / USB status on launch, and "not checked" would hide the one answer a locked
-        // bootloader device needs first.
+        // Probe on launch so the home screen reflects root and USB availability.
         refreshCapabilities()
         launch {
-            // A download interrupted by process death is resumed from persisted state, without
-            // replaying any user action.
+            // Recover downloads from persisted state after process death.
             downloadRepository.recoverInterrupted().forEach { DownloadService.start(context, it) }
         }
     }
@@ -170,8 +167,7 @@ class MainViewModel @Inject constructor(
         require(ipxeScript.startsWith("#!ipxe")) { "invalid_ipxe_script" }
         require(adapter in interfaces()) { "network_interface_changed" }
         if (mode == BootMode.Dhcp) {
-            // Validate here so a bad range is reported before the privileged session starts; the
-            // allocator additionally guarantees the pool never contains the server's own address.
+            // Validate the pool before starting the privileged session.
             runCatching {
                 DhcpPoolAllocator.allocate(dhcpPoolStart, dhcpPoolEnd, adapter.address, adapter.subnetMask)
             }.getOrElse { throw IllegalArgumentException("invalid_dhcp_pool") }

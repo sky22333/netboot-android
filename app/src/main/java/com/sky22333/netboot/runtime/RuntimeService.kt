@@ -50,9 +50,6 @@ class RuntimeService : Service() {
         val action = intent?.action ?: return START_NOT_STICKY
         startForegroundNow()
         scope.launch {
-            // The wake lock is owned by this coroutine and released as soon as the triggering
-            // operation returns, so an active PXE session survives screen-off without holding a
-            // lock while the service is idle.
             try { withSessionWakeLock {
                 when (action) {
                     StartNetwork -> runtime.startNetwork(requireNotNull(intent.getStringExtra(ExtraId)))
@@ -71,8 +68,7 @@ class RuntimeService : Service() {
     }
 
     override fun onDestroy() {
-        // Runs on the main thread, so the shutdown call must not block it: the broker recovers the
-        // USB state on its own when this process disappears.
+        // Do not block the main thread; broker disconnect triggers USB recovery.
         unregisterReceiver(usbReceiver)
         runtime.shutdownAfterServiceDestroyed()
         releaseWakeLock()
@@ -80,10 +76,7 @@ class RuntimeService : Service() {
         super.onDestroy()
     }
 
-    /**
-     * Holds a partial wake lock only while [block] runs and only when the operation can leave the
-     * radio serving PXE or the USB gadget mapped. The lock is never retained on failure.
-     */
+    /** Keep the lock while PXE or USB remains active; release it when both are idle. */
     private suspend fun withSessionWakeLock(block: suspend () -> Unit) {
         acquireWakeLock()
         try {

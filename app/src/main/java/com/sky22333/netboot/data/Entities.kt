@@ -69,13 +69,7 @@ data class DownloadSegmentEntity(
     val currentByte: Long,
 )
 
-/**
- * A saved PXE configuration.
- *
- * [dhcpPoolStart] and [dhcpPoolEnd] are only used by [BootMode.Dhcp]. They are stored blank for a
- * profile that has never configured them, and the DHCP allocator then derives a safe pool for the
- * selected network instead of assuming a fixed /24 (which would be wrong on any other subnet).
- */
+/** Blank DHCP pool bounds derive from the selected network; proxy mode ignores them. */
 @Entity(tableName = "boot_profiles")
 data class BootProfileEntity(
     @PrimaryKey val id: String,

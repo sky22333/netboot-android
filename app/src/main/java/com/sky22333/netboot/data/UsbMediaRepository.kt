@@ -35,7 +35,7 @@ class UsbMediaRepository @Inject constructor(private val isoRepository: IsoRepos
         val directory = File(root, "media").apply { mkdirs() }
         if (directory.canonicalFile.parentFile != root || Files.isSymbolicLink(directory.toPath())) throw IOException("media_not_regular")
         val target = File(directory, "${asset.sha256.lowercase()}-v1.img")
-        // A completed image is keyed by source content; reusing it needs no UDF traversal or JNI load.
+        // Reuse completed images by source hash, without reopening UDF or loading JNI.
         if (target.isFile && !Files.isSymbolicLink(target.toPath()) && UsbMediaLayout.isDisk(target)) return@withContext PreparedUsbMedia(target, false)
         val coroutine = currentCoroutineContext()
         ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY).use { input ->

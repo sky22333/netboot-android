@@ -40,10 +40,7 @@ object RootBrokerMain {
                     output.flush()
                 }
 
-                /**
-                 * Localized text is produced by the app from [code] and [arguments]; the broker
-                 * only ever forwards stable codes so the same event renders in either language.
-                 */
+                /** Forward event codes and arguments; localization belongs to the app. */
                 fun emitUsbEvent(level: String, code: String, arguments: Map<String, String>?) {
                     val payload = BrokerEvent(
                         timestamp = System.currentTimeMillis(),
@@ -70,9 +67,7 @@ object RootBrokerMain {
                     }
                 }
 
-                // A gadget left behind by a previous session (crash, force-stop, revoked grant) is
-                // recovered before any request is served, so the phone's USB configuration is not
-                // left pointing at an ISO this session does not know about.
+                // Restore any previous session before accepting requests.
                 runCatching { usb.restore() }.onSuccess(::reportRestore)
 
                 try {
@@ -104,8 +99,7 @@ object RootBrokerMain {
                         if (request.operation == BrokerOperation.Shutdown) break
                     }
                 } finally {
-                    // Service teardown and USB recovery are separate concerns: failing to stop the
-                    // Go core must never prevent the USB configuration from being restored.
+                    // Restore USB even if stopping the Go core fails.
                     runCatching { Mobilecore.stop() }
                     runCatching { usb.restore() }.onSuccess(::reportRestore)
                 }

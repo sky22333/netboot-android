@@ -134,8 +134,7 @@ class IsoRepository @Inject constructor(
             report(0, temporaryFile.length(), true)
             val sha256 = sha256(temporaryFile, { coroutine.ensureActive() }) { bytes, total -> report(bytes, total, true) }
             coroutine.ensureActive()
-            // Once the file is published, finish the tiny database commit even if the UI goes away.
-            // Process death in this interval is reconciled from the final file on next startup.
+            // Finish the DB commit after publication; startup reconciles process death.
             withContext(NonCancellable) {
                 Files.move(temporaryFile.toPath(), finalFile.toPath(), StandardCopyOption.ATOMIC_MOVE)
                 dao.complete(id, IsoState.Ready, finalFile.length(), sha256)

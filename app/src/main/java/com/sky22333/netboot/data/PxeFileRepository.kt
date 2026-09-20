@@ -121,8 +121,7 @@ class PxeFileRepository @Inject constructor(@ApplicationContext private val cont
             "undionly.kpxe" to "f0c1c2f07a15f6a8e987f61ec8835bdc85b5557754348be8fbbdb08af4dfcd30",
         )
 
-        // Served from the configured script, so an imported file of the same name would be
-        // shadowed; deleting stays allowed so a file imported earlier can still be removed.
+        // Reserved scripts come from configuration; allow deletion of older imported copies.
         val ScriptNames = setOf("autoexec.ipxe", "boot.ipxe")
         val Reserved = BuiltIns.keys + ScriptNames
     }

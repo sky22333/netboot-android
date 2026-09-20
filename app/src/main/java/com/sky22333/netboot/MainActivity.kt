@@ -130,23 +130,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The system bars are painted by the theme instead of by the platform: a hardcoded
-        // android:navigationBarColor can never equal Miuix's computed surface colour
-        // (#F7F7F7 vs #FAFAFA in light mode), which is what produced the visible seam under the
-        // navigation bar. See setSystemBarsToTheme below.
         enableEdgeToEdge()
         setContent { NetBootApp(viewModel) }
     }
 }
 
-/**
- * Keeps the window and the system bar areas on the same colour as the active Miuix theme.
- *
- * Miuix's [Scaffold] and [NavigationBar] both paint edge to edge, so the bar chrome only matches
- * when the platform bars are transparent. On API levels that force a scrim for three-button
- * navigation that is not possible, so the bar is instead painted with the theme background and the
- * icon appearance is switched to stay legible.
- */
+/** Match system bars and icon contrast to the active Miuix theme. */
 @Composable
 private fun SetSystemBarsToMiuixTheme() {
     val background = MiuixTheme.colorScheme.background
@@ -156,10 +145,7 @@ private fun SetSystemBarsToMiuixTheme() {
     SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
         window.setBackgroundDrawable(ColorDrawable(background.toArgb()))
-        // Deprecated on API 35+, where the platform forces a transparent navigation bar and only
-        // allows a scrim for three-button navigation. It is still the only way to colour the bar on
-        // API 26-34, and on API 35+ the value is ignored, so keeping it is what makes older devices
-        // consistent with the Miuix surface instead of the old hardcoded #FAFAFA.
+        // Required on API 26–34; deprecated on API 35+.
         @Suppress("DEPRECATION")
         window.navigationBarColor = background.toArgb()
         val controller = WindowCompat.getInsetsController(window, view)
@@ -193,7 +179,6 @@ private fun NetBootApp(viewModel: MainViewModel) {
 
 @Composable
 private fun MainShell(viewModel: MainViewModel) {
-    // rememberSaveable so a rotation or process recreation keeps the user on the same tab.
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var pxeForm by rememberSaveable(stateSaver = PxeFormState.Saver) { mutableStateOf(PxeFormState()) }
     val defaultScript by viewModel.defaultIpxeScript.collectAsStateWithLifecycle()
@@ -251,10 +236,7 @@ private fun MainShell(viewModel: MainViewModel) {
     }
 }
 
-/**
- * Runtime notifications are mandatory for the ongoing download and PXE foreground services on
- * API 33+, where the manifest declaration alone is not enough. Requests at most once per process.
- */
+/** Request notification permission on API 33+ to show service notifications. */
 @Composable
 private fun RequestNotificationPermissionOnce() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
@@ -824,9 +806,7 @@ private fun SettingsScreen(viewModel: MainViewModel, padding: PaddingValues) {
                 )
             }
             Card(
-                // Bounded to the window so the log list scrolls instead of overflowing the dialog:
-                // Miuix only caps dialog height on large screens, so a phone dialog needs its own
-                // bound. 72% of the window shows noticeably more lines than the previous fixed band.
+                // Miuix does not cap dialog height on phones; bound it so logs can scroll.
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() * 0.55f }),
@@ -988,18 +968,11 @@ private fun CompactButton(
     enabled = enabled,
     colors = if (primary) ButtonDefaults.buttonColorsPrimary() else ButtonDefaults.buttonColors(),
     cornerRadius = 12.dp,
-    // 48 dp is the minimum touch target required by the accessibility baseline.
     minHeight = 48.dp,
     insideMargin = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
     content = content,
 )
 
-/**
- * Icon-only action for bars and list rows, where a labelled button is too wide.
- *
- * Uses the Miuix [IconButton] so the pressed state and squircle surface match the rest of the app,
- * and keeps the 48 dp touch target while drawing a smaller 24 dp glyph.
- */
 @Composable
 private fun CompactIconButton(
     icon: ImageVector,
@@ -1017,7 +990,6 @@ private fun CompactIconButton(
 ) {
     Icon(
         imageVector = icon,
-        // Icon-only controls carry the label they replace, so screen readers still name the action.
         contentDescription = contentDescription,
         modifier = Modifier.size(24.dp),
         tint = if (enabled) {
@@ -1085,8 +1057,7 @@ private fun runtimeErrorText(code: String): String = stringResource(
         "tftp_port_unavailable" -> R.string.runtime_error_tftp_port
         "dhcp_port_unavailable" -> R.string.runtime_error_dhcp_port
         "usb_restore_failed" -> R.string.runtime_error_usb_restore
-        // Probe and attach share the same reason codes, so a failure after a successful probe is
-        // explained with the same actionable text.
+        // Reuse probe messages for attach failures with the same reason code.
         "configfs_unavailable", "configfs_not_writable", "udc_unavailable",
         "active_gadget_unavailable", "gadget_read_only", "mass_storage_unsupported", "usb_unsupported",
         -> R.string.runtime_error_usb_unsupported
@@ -1106,7 +1077,6 @@ private fun runtimeErrorText(code: String): String = stringResource(
     },
 )
 
-/** Maps a USB probe reason code to localized text shown to the user. */
 @Composable
 private fun usbCapabilityReason(code: String?): String = stringResource(
     when (code) {

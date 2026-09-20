@@ -65,7 +65,7 @@ class UsbGadgetController(
 
     fun attach(isoPath: String, cdrom: Boolean = true) {
         val iso = validateBackingFile(managedIsoDirectory, File(isoPath))
-        // Reject truncation or an unbootable raw ISO before journaling or touching configfs.
+        // Validate media layout before changing configfs.
         if (cdrom) UsbMediaLayout.requireOptical(iso)
         else if (!UsbMediaLayout.isDisk(iso)) throw UsbException("media_invalid_disk")
         if (stateFile.exists()) {

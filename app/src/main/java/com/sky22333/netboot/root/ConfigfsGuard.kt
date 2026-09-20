@@ -2,33 +2,16 @@ package com.sky22333.netboot.root
 
 import java.io.File
 
-/**
- * Enforces the immutable safety boundary from the project charter: the only kernel-provided paths
- * this app may write are USB gadget nodes under configfs. Everything else — most importantly any
- * block-device partition node under the device tree — is refused before a single byte is written.
- *
- * The guard exists because the recovery path trusts a JSON state file. A corrupted, hand-edited or
- * stale file must not be able to redirect a privileged write at a block device.
- */
+/** Restricts privileged writes to canonical configfs gadget paths, including restored state. */
 internal object ConfigfsGuard {
     val allowedRoots = listOf("/config/usb_gadget", "/sys/kernel/config/usb_gadget")
 
-    /**
-     * Set of canonical prefixes that any privileged path must live under.
-     *
-     * [roots] is injectable so the allow-list itself can be exercised against temporary
-     * directories; production call sites always use the default and therefore the real configfs.
-     */
+    /** Inject roots for tests; production uses the configfs allow-list. */
     private fun rootPrefixes(roots: List<String>): List<String> = roots.mapNotNull { allowed ->
         File(allowed).takeIf { it.isDirectory }?.canonicalPath
     }
 
-    /**
-     * Canonicalises [target] and asserts it is a configfs gadget node.
-     *
-     * Canonicalisation is what makes this robust: a path that walks up out of the gadget root with
-     * dot segments collapses to its real location and is then rejected by the prefix check.
-     */
+    /** Resolve symlinks and dot segments before checking the configfs boundary. */
     fun requireNode(target: File, description: String, roots: List<String> = allowedRoots) {
         val canonical = target.canonicalPath
         val prefixes = rootPrefixes(roots)

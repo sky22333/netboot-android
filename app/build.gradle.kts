@@ -12,21 +12,12 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
-// The only NDK release validated with the pinned gomobile commit. gomobile does not read
-// android.ndkVersion, so this constant is the single source of truth for both AGP and gomobile.
+// Share the pinned NDK with gomobile, which does not read android.ndkVersion.
 val pinnedNdkVersion = "28.2.13676358"
 
-/** Every ABI this project knows how to build for. */
 val knownAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 
-/**
- * ABIs this build produces, as Gradle ABI names.
- *
- * The default is the phone set from `gradle.properties`; an emulator build adds `x86_64`, e.g.
- * `./gradlew assembleDebug -PnetbootAbis=arm64-v8a,armeabi-v7a,x86_64`. One switch drives the AAR
- * target, the APK splits and the AAR verification, so a variant can never ship native code it did
- * not intend to.
- */
+/** One ABI selection controls gomobile, APK splits and AAR verification. */
 val netbootAbis: List<String> = providers.gradleProperty("netbootAbis")
     .get()
     .split(',')
@@ -38,10 +29,7 @@ val netbootAbis: List<String> = providers.gradleProperty("netbootAbis")
     }
 val emulatorAbis = listOf("x86", "x86_64")
 
-/**
- * Released version name. CI passes the release tag (`-PnetbootVersionName=1.0.0`) so the published
- * APK and its tag can never disagree; local builds fall back to the placeholder.
- */
+/** CI supplies the release tag; local builds default to 1.0.0. */
 val netbootVersionName: String = providers.gradleProperty("netbootVersionName").getOrElse("1.0.0")
 
 /** gomobile inverts the x86 family naming: Gradle's `x86_64` is Go's `amd64`. */
@@ -80,8 +68,6 @@ android {
         }
     }
 
-    // The gomobile AAR carries native code for exactly these ABIs; shipping anything else would
-    // either bloat the phone release or produce an APK that cannot run on it.
     splits {
         abi {
             isEnable = true
@@ -96,8 +82,6 @@ android {
         buildConfig = true
     }
 
-    sourceSets.getByName("androidTest").assets.directories.add("schemas")
-
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
@@ -111,8 +95,7 @@ android {
     }
 
     androidResources {
-        // AAPT wants BCP-47 tags in `b+` form here; "zh-Hans" is rejected as an invalid -c config.
-        // This must stay aligned with res/xml/locales_config.xml.
+        // AAPT requires b+zh+Hans; keep it aligned with locales_config.xml.
         localeFilters += listOf("en", "b+zh+Hans")
         noCompress += listOf("efi", "kpxe", "ipxe")
     }
@@ -144,15 +127,7 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
-// ---------------------------------------------------------------------------
-// Android SDK / NDK / JDK discovery.
-//
-// These used to be read straight from the environment, which silently produced the unusable path
-// "null/ndk/28.2.13676358" because ANDROID_HOME and ANDROID_SDK_ROOT were unset while
-// local.properties already carried the real location. AGP reads local.properties, so it must be
-// the first source of truth here too. Everything is expressed as a Provider so the configuration
-// cache stays valid.
-// ---------------------------------------------------------------------------
+// Prefer local.properties for SDK discovery, matching AGP.
 
 val localPropertiesFile = rootProject.layout.projectDirectory.file("local.properties")
 
@@ -209,8 +184,7 @@ val verifyGoAar = tasks.register<VerifyGoAarTask>("verifyGoAar") {
     aarInput.set(buildGoAar.flatMap { it.aarOutput })
     installedAar.set(goAarFile)
     requiredAbis.set(netbootAbis)
-    // An x86 build is allowed only when it was explicitly requested, so a phone artifact can never
-    // silently carry emulator-only native code.
+    // Emulator ABIs must be explicitly requested.
     forbiddenAbis.set(emulatorAbis.filterNot(netbootAbis::contains))
 }
 
@@ -254,7 +228,6 @@ dependencies {
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.compose.ui.test.manifest)
-    androidTestImplementation(libs.room.testing)
 
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

@@ -61,7 +61,7 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
 
     suspend fun probe(): UsbCapability = json.decodeFromString(request(BrokerOperation.Probe).payload)
 
-    /** Whether the host has finished enumerating the exposed LUN. */
+    /** True after the host enumerates the exposed LUN. */
     suspend fun usbHostConnected(): Boolean =
         json.decodeFromString<BrokerStatus>(request(BrokerOperation.Status).payload).usbHostConnected
 
