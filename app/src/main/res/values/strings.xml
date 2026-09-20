@@ -136,6 +136,14 @@
     <string name="logs_copied">Logs copied</string>
     <string name="logs_copy_truncated">Recent logs copied. Export to a file for the complete log.</string>
     <string name="image_details">Image details</string>
+    <string name="image_file_name">File name</string>
+    <string name="image_size">Size</string>
+    <string name="image_source">Source</string>
+    <string name="image_source_import">Local import</string>
+    <string name="image_added">Added</string>
+    <string name="image_system">System</string>
+    <string name="image_volume_label">Volume label</string>
+    <string name="image_sha256" translatable="false">SHA-256</string>
     <string name="media_invalid_image">The image is empty or invalid. Download or import a valid ISO image.</string>
     <string name="media_windows_layout">This image cannot be prepared as a Windows boot drive. Use an official installation image.</string>
     <string name="media_large_nonhybrid">This image is too large for a USB optical drive. Use a hybrid ISO that supports USB boot.</string>

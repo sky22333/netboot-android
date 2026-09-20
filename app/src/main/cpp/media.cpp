@@ -322,6 +322,26 @@ extern "C" DRESULT disk_ioctl(BYTE drive, BYTE command, void* value) {
         default: return RES_PARERR;
     }
 }
+extern "C" JNIEXPORT jstring JNICALL Java_com_sky22333_netboot_data_NativeMedia_volumeLabel(JNIEnv* env, jobject, jint input) {
+    try {
+        regular(input);
+        // ECMA-119: primary volume identifier is bytes 41–72 (one-based).
+        uint8_t descriptor[2048];
+        for (uint64_t sector = 16; sector < 32; ++sector) {
+            if (!transfer(input, descriptor, sizeof(descriptor), sector * 2048, false)) break;
+            if (std::memcmp(descriptor + 1, "CD001", 5) != 0 || descriptor[6] != 1) continue;
+            if (descriptor[0] == 255) break;
+            if (descriptor[0] != 1) continue;
+            std::string label(reinterpret_cast<char*>(descriptor + 40), 32);
+            if (std::all_of(label.begin(), label.end(), [](unsigned char c) { return c >= 32 && c <= 126; }) &&
+                label.find_first_not_of(' ') != std::string::npos) return env->NewStringUTF(label.c_str());
+        }
+        auto udf = openUdf(input);
+        const char* label = udf ? udfread_get_volume_id(udf.get()) : nullptr;
+        return label ? env->NewStringUTF(label) : nullptr;
+    } catch (const std::exception& e) { fail(env, e.what()); return nullptr; }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL Java_com_sky22333_netboot_data_NativeMedia_isWindows(JNIEnv* env, jobject, jint input) {
     try {
         auto udf = openUdf(input);

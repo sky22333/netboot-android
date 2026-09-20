@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.os.storage.StorageManager
+import android.os.ParcelFileDescriptor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileInputStream
@@ -176,6 +177,21 @@ class IsoRepository @Inject constructor(
             return@withContext false
         }
         dao.deleteIfIdle(id) > 0
+    }
+
+    suspend fun volumeLabel(id: String): String? = withContext(Dispatchers.IO) {
+        val asset = dao.find(id)?.takeIf { it.state == IsoState.Ready } ?: return@withContext null
+        try {
+            val file = File(asset.filePath)
+            if (Files.isSymbolicLink(file.toPath()) || file.canonicalFile.parentFile != isoDirectory.canonicalFile || !file.isFile) return@withContext null
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use {
+                NativeMedia.volumeLabel(it.fd)?.trim()?.takeIf { label -> label.isNotEmpty() }
+            }
+        } catch (_: IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
     }
 
     fun managedDirectory(): File = isoDirectory

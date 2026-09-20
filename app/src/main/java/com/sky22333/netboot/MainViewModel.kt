@@ -125,6 +125,7 @@ class MainViewModel @Inject constructor(
     fun cancelDownload(id: String, deletePartial: Boolean) = DownloadService.cancel(context, id, deletePartial)
     fun deleteIso(id: String) = launch { check(runtimeRepository.deleteIso(id)) { "image_in_use" } }
     fun importPxeFiles(uris: List<Uri>) = launch { pxeFileRepository.import(uris) }
+    suspend fun imageVolumeLabel(id: String): String? = isoRepository.volumeLabel(id)
     fun deletePxeFile(name: String) = launch { pxeFileRepository.delete(name) }
 
     fun saveProfile(

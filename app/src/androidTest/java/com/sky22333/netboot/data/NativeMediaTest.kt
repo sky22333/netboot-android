@@ -26,6 +26,40 @@ class NativeMediaTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun volumeLabelReadsUdfWithoutChangingTheImage() = fixture { _, iso ->
+        val hash = IsoRepository.sha256(iso)
+        ParcelFileDescriptor.open(iso, ParcelFileDescriptor.MODE_READ_ONLY).use {
+            assertEquals("NETBOOT_TEST", NativeMedia.volumeLabel(it.fd))
+        }
+        assertEquals(hash, IsoRepository.sha256(iso))
+    }
+
+    @Test fun volumeLabelReadsIsoPrimaryDescriptorAfterBootRecord() = fixture { root, _ ->
+        val iso = File(root, "linux.iso")
+        java.io.RandomAccessFile(iso, "rw").use { output ->
+            output.setLength(32L * 2048)
+            for (sector in 16L..17L) {
+                output.seek(sector * 2048)
+                output.writeByte(if (sector == 16L) 0 else 1)
+                output.write("CD001".toByteArray(Charsets.US_ASCII))
+                output.writeByte(1)
+            }
+            output.seek(17L * 2048 + 40)
+            output.write("LINUX_TEST".padEnd(32).toByteArray(Charsets.US_ASCII))
+        }
+        ParcelFileDescriptor.open(iso, ParcelFileDescriptor.MODE_READ_ONLY).use {
+            assertEquals("LINUX_TEST", NativeMedia.volumeLabel(it.fd)?.trim())
+        }
+    }
+
+    @Test fun volumeLabelIgnoresUnrecognizedImage() = fixture { root, _ ->
+        val iso = File(root, "unknown.iso")
+        java.io.RandomAccessFile(iso, "rw").use { it.setLength(512L * 2048) }
+        ParcelFileDescriptor.open(iso, ParcelFileDescriptor.MODE_READ_ONLY).use {
+            assertEquals(null, NativeMedia.volumeLabel(it.fd))
+        }
+    }
+
     @Test fun udfToReadOnlyInstallationDiskPreservesFiles() = fixture { root, iso ->
         val image = File(root, "disk.img")
         ParcelFileDescriptor.open(iso, ParcelFileDescriptor.MODE_READ_ONLY).use { input ->

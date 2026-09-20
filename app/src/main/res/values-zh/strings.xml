@@ -138,6 +138,13 @@
     <string name="logs_copied">日志已复制</string>
     <string name="logs_copy_truncated">已复制最近的日志，完整日志请导出为文件。</string>
     <string name="image_details">镜像详情</string>
+    <string name="image_file_name">文件名</string>
+    <string name="image_size">大小</string>
+    <string name="image_source">来源</string>
+    <string name="image_source_import">本地导入</string>
+    <string name="image_added">添加时间</string>
+    <string name="image_system">系统</string>
+    <string name="image_volume_label">镜像卷标</string>
     <string name="media_invalid_image">镜像为空或格式无效，请重新下载或导入有效的 ISO 镜像。</string>
     <string name="media_windows_layout">此镜像无法制作成 Windows 启动盘，请换用官方安装镜像。</string>
     <string name="media_large_nonhybrid">此镜像过大，无法作为 USB 光驱使用。请改用支持 USB 启动的混合 ISO 镜像。</string>

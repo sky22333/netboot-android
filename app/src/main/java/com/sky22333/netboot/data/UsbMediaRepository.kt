@@ -77,6 +77,7 @@ interface MediaProgress { fun onProgress(stage: Int, done: Long, total: Long): B
 @Keep
 internal object NativeMedia {
     init { System.loadLibrary("netboot_media") }
+    external fun volumeLabel(input: Int): String?
     external fun isWindows(input: Int): Boolean
     external fun buildWindows(input: Int, output: Int, directory: String, progress: MediaProgress)
 }

@@ -55,6 +55,8 @@ import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.Lifecycle
@@ -104,6 +106,8 @@ import com.sky22333.netboot.runtime.RuntimeState
 import com.sky22333.netboot.runtime.NetworkAdapter
 import dagger.hilt.android.AndroidEntryPoint
 import java.util.Locale
+import java.util.Date
+import java.text.DateFormat
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -560,10 +564,34 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
     val detailAsset = assets.firstOrNull { it.id == detailAssetId }
     OverlayDialog(show = detailAsset != null, title = stringResource(R.string.image_details), onDismissRequest = { detailAssetId = null }) {
         detailAsset?.let { asset ->
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(asset.fileName, fontSize = 13.sp)
-                SelectionContainer { Text("SHA-256\n${asset.sha256}", fontSize = 12.sp, fontFamily = FontFamily.Monospace) }
-                CompactButton({ detailAssetId = null }, Modifier.fillMaxWidth()) { Text(stringResource(R.string.close)) }
+            key(asset.id) {
+                val volumeLabel by produceState<String?>(null) { value = viewModel.imageVolumeLabel(asset.id) }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SelectionContainer {
+                        Column(
+                            Modifier.heightIn(max = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() * 0.55f })
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            ImageDetailField(stringResource(R.string.image_file_name), asset.fileName)
+                            ImageDetailField(stringResource(R.string.image_size), formatBytes(asset.fileSize))
+                            ImageDetailField(stringResource(R.string.image_source), stringResource(if (asset.source == "microsoft") R.string.download_official else R.string.image_source_import))
+                            ImageDetailField(stringResource(R.string.image_added), DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(asset.createdAt)))
+                            if (asset.source == "microsoft") {
+                                if (asset.product.isNotBlank()) ImageDetailField(stringResource(R.string.image_system), asset.product)
+                                IsoArchitecture.entries.firstOrNull { it.name == asset.architecture }?.let {
+                                    ImageDetailField(stringResource(R.string.architecture), it.name)
+                                }
+                                IsoLanguage.entries.firstOrNull { it.name == asset.language }?.let {
+                                    ImageDetailField(stringResource(R.string.language), stringResource(if (it == IsoLanguage.Chinese) R.string.iso_chinese else R.string.iso_english))
+                                }
+                            }
+                            volumeLabel?.let { ImageDetailField(stringResource(R.string.image_volume_label), it) }
+                            ImageDetailField(stringResource(R.string.image_sha256), asset.sha256, monospace = true)
+                        }
+                    }
+                    CompactButton({ detailAssetId = null }, Modifier.fillMaxWidth()) { Text(stringResource(R.string.close)) }
+                }
             }
         }
     }
@@ -599,6 +627,14 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
             CompactButton({ pendingDelete = null }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
             CompactButton({ pendingDelete?.let(viewModel::deleteIso); pendingDelete = null }, Modifier.weight(1f)) { Text(stringResource(R.string.delete)) }
         }
+    }
+}
+
+@Composable
+private fun ImageDetailField(label: String, value: String, monospace: Boolean = false) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        Text(value, fontSize = 13.sp, fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default)
     }
 }
 
