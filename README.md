@@ -1,5 +1,7 @@
 # 系统启动助手（NetBoot）
 
+简体中文 | [English](README.en.md)
+
 让已获 KernelSU 授权的 Android 手机提供 **PXE 网络启动**或**只读 USB 启动盘**，
 并支持微软官方 Windows ISO 下载、本地镜像导入和断点续传。
 
