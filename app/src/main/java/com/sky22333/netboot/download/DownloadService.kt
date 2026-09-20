@@ -143,7 +143,7 @@ class DownloadService : Service() {
         val pauseIntent = servicePendingIntent(ActionPause, taskId)
         val cancelIntent = servicePendingIntent(ActionCancel, taskId)
         return NotificationCompat.Builder(this, ChannelId)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(if (verifying) R.string.state_verifying else R.string.download_running))
             .setContentText(if (total > 0) getString(R.string.download_progress, formatBytes(downloaded), formatBytes(total)) else null)
             .setOnlyAlertOnce(true)
@@ -159,7 +159,7 @@ class DownloadService : Service() {
         notificationManager.notify(
             taskId.notificationId(),
             NotificationCompat.Builder(this, ChannelId)
-                .setSmallIcon(R.drawable.ic_launcher)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(getString(if (success) R.string.download_complete else R.string.download_failed))
                 .setAutoCancel(true)
                 .setContentIntent(mainPendingIntent())

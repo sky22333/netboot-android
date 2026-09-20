@@ -19,8 +19,8 @@
     <string name="pxe">PXE</string>
     <string name="settings">Settings</string>
     <string name="dashboard_title">Your boot center</string>
-    <string name="dashboard_ready">Ready when you need it</string>
-    <string name="dashboard_active">A service is running on this phone</string>
+    <string name="dashboard_ready">Boot your favorite OS, anytime, anywhere</string>
+    <string name="dashboard_active">Service is running</string>
     <string name="overview">Overview</string>
     <string name="quick_actions">Quick actions</string>
     <string name="image_dashboard_summary">Images %1$d · Downloads %2$d</string>
@@ -78,9 +78,8 @@
     <string name="dark_theme">Dark</string>
     <string name="connections">Download connections</string>
     <string name="diagnostics">Diagnostics</string>
-    <string name="runtime_logs">Live runtime logs</string>
+    <string name="runtime_logs">Logs</string>
     <string name="runtime_logs_summary">Recent events: %1$d</string>
-    <string name="runtime_logs_live">Updates live · up to 1,000 recent events</string>
     <string name="no_logs">No logs yet. Start PXE to see DHCP, TFTP and HTTP activity here.</string>
     <string name="pause_follow">Pause follow</string>
     <string name="follow_latest">Follow latest</string>
@@ -107,7 +106,9 @@
     <string name="log_http_request">HTTP request</string>
     <string name="log_operation_failed">Operation failed</string>
     <string name="log_event">Runtime event</string>
-    <string name="about_safety">NetBoot turns this phone into a temporary network or USB boot source. It does not flash the phone or change system partitions. Device and computer support may vary.</string>
+    <string name="about_description">Download and manage system images, serve PXE boot files over your local network, and use your phone as read-only USB installation media. Requires KernelSU authorization; device and computer support may vary.</string>
+    <string name="app_version">Version %1$s</string>
+    <string name="open_repository">Open GitHub repository</string>
     <string name="download_channel">ISO downloads</string>
     <string name="download_channel_description">Windows ISO download progress</string>
     <string name="download_running">Downloading Windows ISO</string>
@@ -143,7 +144,7 @@
     <string name="media_file_too_large">An installation file cannot fit the supported FAT32 layout, even after splitting. Your original ISO is kept. Try another official installation image.</string>
     <string name="media_failed">The installation disk could not be prepared. Your original ISO is kept and USB has not been changed. Check available storage and the log, then retry.</string>
     <string name="confirm">Confirm</string>
-    <string name="about">About and safety</string>
+    <string name="about">About</string>
     <string name="about_summary">Network and USB boot for your devices</string>
     <string name="close">Close</string>
     <string name="state_queued">Queued</string>

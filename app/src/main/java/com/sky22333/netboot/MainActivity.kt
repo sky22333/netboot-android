@@ -14,6 +14,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -48,6 +51,8 @@ import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SaveAlt
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,6 +82,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -363,18 +369,44 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
 private fun RuntimeControls(viewModel: MainViewModel) {
     val state by viewModel.runtime.collectAsStateWithLifecycle()
     val assets by viewModel.assets.collectAsStateWithLifecycle()
-    CompactCard(Modifier.fillMaxWidth()) {
-        assets.firstOrNull { it.id == state.activeIsoId }?.let { Text(it.fileName, fontWeight = FontWeight.Medium) }
+    val activeFileName = assets.firstOrNull { it.id == state.activeIsoId }?.fileName
+    CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
         if (state.usbPreparing) {
-            PreparationProgress(state)
-            CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelUsbPreparation)
+            BasicComponent(
+                title = stringResource(R.string.usb_installer),
+                summary = activeFileName,
+                insideMargin = PaddingValues(12.dp),
+                endActions = {
+                    CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelUsbPreparation)
+                },
+                bottomAction = { PreparationProgress(state) },
+            )
         }
-        if (state.usbRecoveryRequired) Text(runtimeErrorText("usb_restore_failed"), fontSize = 13.sp, color = MiuixTheme.colorScheme.error)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (state.usbAttached || state.usbRecoveryRequired) Button(onClick = viewModel::detachIso, enabled = !state.busy) {
-                Text(stringResource(if (state.usbRecoveryRequired) R.string.retry_restore else R.string.detach_usb))
-            }
-            if (state.networkRunning) Button(onClick = viewModel::stopNetwork, enabled = !state.busy) { Text(stringResource(R.string.stop_pxe)) }
+        if (state.usbAttached || state.usbRecoveryRequired) {
+            BasicComponent(
+                title = stringResource(R.string.usb_installer),
+                summary = if (state.usbRecoveryRequired) runtimeErrorText("usb_restore_failed") else activeFileName,
+                insideMargin = PaddingValues(12.dp),
+                enabled = !state.busy,
+                endActions = {
+                    CompactIconButton(
+                        icon = if (state.usbRecoveryRequired) Icons.Outlined.Refresh else Icons.Outlined.UsbOff,
+                        contentDescription = stringResource(if (state.usbRecoveryRequired) R.string.retry_restore else R.string.detach_usb),
+                        onClick = viewModel::detachIso,
+                        enabled = !state.busy,
+                    )
+                },
+            )
+        }
+        if (state.networkRunning) {
+            BasicComponent(
+                title = stringResource(R.string.pxe_service),
+                insideMargin = PaddingValues(12.dp),
+                enabled = !state.busy,
+                endActions = {
+                    CompactIconButton(Icons.Outlined.StopCircle, stringResource(R.string.stop_pxe), viewModel::stopNetwork, enabled = !state.busy)
+                },
+            )
         }
     }
 }
@@ -626,7 +658,6 @@ private fun PxeScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { HintCard(stringResource(R.string.pxe_recommendation)) }
         item {
             CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
                 OverlayDropdownPreference(
@@ -724,6 +755,8 @@ private fun PxeScreen(
 
 @Composable
 private fun SettingsScreen(viewModel: MainViewModel, padding: PaddingValues) {
+    val uriHandler = LocalUriHandler.current
+    val openRepositoryLabel = stringResource(R.string.open_repository)
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val events by viewModel.events.collectAsStateWithLifecycle()
     var showAbout by remember { mutableStateOf(false) }
@@ -771,7 +804,6 @@ private fun SettingsScreen(viewModel: MainViewModel, padding: PaddingValues) {
     OverlayDialog(
         show = showLogs,
         title = stringResource(R.string.runtime_logs),
-        summary = stringResource(R.string.runtime_logs_live),
         onDismissRequest = { showLogs = false },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -843,11 +875,34 @@ private fun SettingsScreen(viewModel: MainViewModel, padding: PaddingValues) {
     OverlayDialog(
         show = showAbout,
         title = stringResource(R.string.about),
-        summary = stringResource(R.string.about_summary),
         onDismissRequest = { showAbout = false },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(stringResource(R.string.about_safety), fontSize = 13.sp)
+            Column(
+                modifier = Modifier
+                    .heightIn(max = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() * 0.55f })
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(stringResource(R.string.app_name), fontWeight = FontWeight.Medium)
+                Text(stringResource(R.string.about_description), fontSize = 13.sp)
+                Text(stringResource(R.string.pxe_recommendation), fontSize = 13.sp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = openRepositoryLabel) {
+                            uriHandler.openUri("https://github.com/sky22333/netboot-android")
+                        }
+                        .heightIn(min = 48.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        stringResource(R.string.app_version, BuildConfig.VERSION_NAME),
+                        color = MiuixTheme.colorScheme.primary,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
             CompactButton({ showAbout = false }, Modifier.fillMaxWidth()) { Text(stringResource(R.string.close)) }
         }
     }

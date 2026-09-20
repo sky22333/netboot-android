@@ -102,7 +102,7 @@ class RuntimeService : Service() {
 
     private fun startForegroundNow() {
         val notification = NotificationCompat.Builder(this, ChannelId)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.runtime_active))
             .setContentText(getString(R.string.runtime_notification_detail))
             .setOngoing(true)
