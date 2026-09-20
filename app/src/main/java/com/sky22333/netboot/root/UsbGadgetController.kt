@@ -84,6 +84,14 @@ class UsbGadgetController(
             write(File(lun, "ro"), "1")
             write(File(lun, "cdrom"), if (cdrom) "1" else "0")
             write(File(lun, "removable"), "1")
+            val inquiry = File(lun, "inquiry_string")
+            checked(inquiry) {
+                // Optional kernel attribute; SCSI identity uses 8/16/4 ASCII bytes.
+                if (inquiry.isFile && inquiry.canWrite()) {
+                    val product = if (cdrom) "Android USB CD" else "Android USB Disk"
+                    io.write(inquiry, "NetBoot".padEnd(8) + product.padEnd(16) + "0001")
+                }
+            }
             write(File(lun, "file"), iso.canonicalPath)
             verifyLun(state)
             unbind(state)

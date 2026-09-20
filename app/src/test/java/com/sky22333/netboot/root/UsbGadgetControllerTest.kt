@@ -22,7 +22,13 @@ class UsbGadgetControllerTest {
         var failLink = false
         var unsupported = false
         var ignoreUnbind = false
+        var supportsInquiry = true
+        var failInquiry = false
         override fun write(node: File, value: String) {
+            if (node.name == "inquiry_string") {
+                check(!File(config, "mass_storage.netboot").exists())
+                if (failInquiry) throw IOException("inquiry rejected")
+            }
             if (node.name == "UDC") {
                 if (value.isEmpty() && ignoreUnbind) return
                 if (value.isNotEmpty() && failBind) throw IOException("bind refused")
@@ -35,6 +41,7 @@ class UsbGadgetControllerTest {
             super.createFunction(directory)
             File(directory, "lun.0").mkdir()
             listOf("ro", "cdrom", "removable", "file").forEach { File(directory, "lun.0/$it").writeText("") }
+            if (supportsInquiry) File(directory, "lun.0/inquiry_string").writeText("")
         }
         override fun link(link: File, function: File) {
             if (failLink || File(gadget, "UDC").readText().trim().isNotEmpty()) throw IOException("bound or rejected")
@@ -85,11 +92,13 @@ class UsbGadgetControllerTest {
         assertTrue(controller.probe().supported)
         assertFalse(state.exists())
         controller.attach(iso().path)
+        assertEquals("NetBoot Android USB CD  0001\n", File(gadget, "functions/mass_storage.netboot/lun.0/inquiry_string").readText())
         assertTrue(controller.isAttached())
         assertFalse(controller.isHostConnected())
         File(udcs, "controller/state").writeText("configured")
         assertTrue(controller.isHostConnected())
         assertTrue(controller.restore().complete)
+        assertFalse(File(gadget, "functions/mass_storage.netboot").exists())
         assertTrue(File(config, "adb").exists())
         assertEquals("controller", File(gadget, "UDC").readText().trim())
         assertFalse(state.exists())
@@ -101,6 +110,23 @@ class UsbGadgetControllerTest {
         assertEquals("controller", File(gadget, "UDC").readText().trim())
         assertFalse(state.exists())
         assertFalse(File(gadget, "functions/mass_storage.netboot").exists())
+    }
+    @Test fun `kernel without inquiry attribute still attaches and restores`() {
+        val controller = fixture(KernelIo().apply { supportsInquiry = false })
+        controller.attach(iso().path)
+        assertTrue(controller.isAttached())
+        assertFalse(File(gadget, "functions/mass_storage.netboot/lun.0/inquiry_string").exists())
+        assertTrue(controller.restore().complete)
+        assertTrue(File(config, "adb").exists())
+        assertFalse(state.exists())
+    }
+    @Test fun `unexpected inquiry failure restores without disconnecting platform USB`() {
+        val controller = fixture(KernelIo().apply { failInquiry = true })
+        assertThrows(UsbException::class.java) { controller.attach(iso().path) }
+        assertEquals("controller", File(gadget, "UDC").readText().trim())
+        assertTrue(File(config, "adb").exists())
+        assertFalse(File(gadget, "functions/mass_storage.netboot").exists())
+        assertFalse(state.exists())
     }
     @Test fun `failed bind retains journal for retry`() {
         val io = KernelIo(); val controller = fixture(io); io.failBind = true
@@ -177,6 +203,7 @@ class UsbGadgetControllerTest {
         mbr.put(510, 0x55); mbr.put(511, 0xaa.toByte())
         java.io.RandomAccessFile(image, "rw").use { it.write(mbr.array()) }
         controller.attach(image.path, false)
+        assertEquals("NetBoot Android USB Disk0001\n", File(gadget, "functions/mass_storage.netboot/lun.0/inquiry_string").readText())
         assertEquals("0", File(gadget, "functions/mass_storage.netboot/lun.0/cdrom").readText().trim())
         assertEquals("1", File(gadget, "functions/mass_storage.netboot/lun.0/ro").readText().trim())
         assertTrue(controller.isAttached())
