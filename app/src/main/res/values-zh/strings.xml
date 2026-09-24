@@ -192,7 +192,7 @@
     <string name="runtime_error_usb_backing">USB 启动盘的镜像文件不一致，请停止后重新启用。</string>
     <string name="usb_state_mapped">已启用</string>
     <string name="usb_state_host_connected">电脑已连接</string>
-    <string name="usb_attached_warning">使用期间请勿切换 USB 模式。拔线前，请先在应用中停止 USB 启动。</string>
+    <string name="usb_attached_warning">使用期间请勿切换 USB 模式。拔线前请先在应用中停止 USB 启动。</string>
     <string name="runtime_error_generic">操作失败，请查看日志了解原因。</string>
     <string name="insufficient_storage">可用存储空间不足以保存该镜像。</string>
     <string name="network_interface_changed">所选网络已断开</string>
