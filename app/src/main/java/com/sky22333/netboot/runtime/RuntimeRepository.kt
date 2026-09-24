@@ -43,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -69,6 +70,13 @@ data class RuntimeState(
     val usbDiskMode: Boolean = false,
 ) {
     val usbUnsupported: Boolean get() = usbCapability?.supported == false
+
+    internal fun disconnected(): RuntimeState =
+        if (!networkRunning && !usbAttached) this else copy(
+            networkRunning = false, usbAttached = false, usbHostConnected = false,
+            usbRecoveryRequired = usbRecoveryRequired || usbAttached,
+            errorCode = "broker_disconnected",
+        )
 }
 
 data class NetworkAdapter(val name: String, val address: String, val prefixLength: Int = 24) {
@@ -99,6 +107,13 @@ class RuntimeRepository @Inject constructor(
     init {
         scope.launch { broker.events.collect(::recordEvent) }
         scope.launch { pruneEvents() }
+        scope.launch {
+            broker.connected.collect { connected ->
+                if (!connected) operationMutex.withLock {
+                    if (!broker.connected.value) invalidateDisconnectedSession()
+                }
+            }
+        }
     }
 
     suspend fun probe() = mediaMutex.withLock {
@@ -106,10 +121,12 @@ class RuntimeRepository @Inject constructor(
             drivers.recover()
             try {
                 val capability = broker.probe()
-                mutableState.value = mutableState.value.copy(rootAvailable = true, usbCapability = capability)
+                mutableState.update { it.copy(rootAvailable = true, usbCapability = capability) }
             } catch (error: BrokerException) {
                 if (error.code != "root_unavailable") throw error
-                mutableState.value = mutableState.value.copy(rootAvailable = false, usbCapability = null)
+                mutableState.update { it.copy(rootAvailable = false, usbCapability = null) }
+            } finally {
+                if (!state.value.networkRunning && !state.value.usbAttached && !state.value.usbRecoveryRequired) broker.shutdown()
             }
         }
     }
@@ -122,40 +139,40 @@ class RuntimeRepository @Inject constructor(
             ?: error("network_interface_changed")
         val root = File(context.filesDir, "pxe").apply { mkdirs() }
         broker.startNetwork(json.encodeToString(profile.toCoreConfig(mode, root, adapter)))
-        mutableState.value = mutableState.value.copy(networkRunning = true)
+        mutableState.update { it.copy(networkRunning = true) }
     }
 
     suspend fun stopNetwork() = runOperation("stop_network") {
         broker.stopNetwork()
-        mutableState.value = mutableState.value.copy(networkRunning = false)
+        mutableState.update { it.copy(networkRunning = false) }
     }
 
     suspend fun attachIso(isoId: String) = mediaMutex.withLock {
-        runOperation("attach_usb") {
-            check(!mutableState.value.usbAttached && !mutableState.value.usbRecoveryRequired) { "image_in_use" }
+        performOperation("attach_usb") {
+            check(!state.value.usbAttached && !state.value.usbRecoveryRequired) { "image_in_use" }
             val asset = database.isoDao().find(isoId) ?: error("asset_not_found")
             check(asset.state == IsoState.Ready) { "image_in_use" }
             insertEvent(severity = "info", source = "media", code = "media_inspection", argumentsJson = json.encodeToString(
                 mapOf("source" to asset.source, "bytes" to asset.fileSize.toString(), "sha256" to asset.sha256),
             ))
-            mutableState.value = mutableState.value.copy(activeIsoId = isoId)
-            val media = try {
-                preparationJob = currentCoroutineContext()[Job]
-                mutableState.value = mutableState.value.copy(usbPreparing = true, preparedBytes = 0, preparationTotal = 0, preparationStage = UsbPreparationStage.CopyFiles)
-                usbMedia.prepare(asset) { stage, done, total ->
-                    mutableState.value = mutableState.value.copy(preparedBytes = done, preparationTotal = total, preparationStage = stage)
+            preparationJob = currentCoroutineContext()[Job]
+            mutableState.update { it.copy(activeIsoId = isoId, usbPreparing = true, preparedBytes = 0, preparationTotal = 0, preparationStage = UsbPreparationStage.CopyFiles) }
+            try {
+                val media = usbMedia.prepare(asset) { stage, done, total ->
+                    mutableState.update { it.copy(preparedBytes = done, preparationTotal = total, preparationStage = stage) }
+                }
+                withOperationLock {
+                    preparationJob = null
+                    mutableState.update { it.copy(usbPreparing = false) }
+                    broker.attachIso(media.file, media.cdrom)
+                    mutableState.update { it.copy(usbAttached = true, activeIsoId = isoId, usbDiskMode = !media.cdrom) }
+                    val connected = broker.usbHostConnected()
+                    mutableState.update { it.copy(usbHostConnected = connected) }
                 }
             } finally {
                 preparationJob = null
-                mutableState.value = mutableState.value.copy(usbPreparing = false)
+                mutableState.update { it.copy(usbPreparing = false) }
             }
-            broker.attachIso(media.file, media.cdrom)
-            mutableState.value = mutableState.value.copy(
-                usbAttached = true,
-                usbHostConnected = runCatching { broker.usbHostConnected() }.getOrDefault(false),
-                activeIsoId = isoId,
-                usbDiskMode = !media.cdrom,
-            )
         }
     }
 
@@ -170,25 +187,27 @@ class RuntimeRepository @Inject constructor(
 
     suspend fun detachIso() = runOperation("detach_usb") {
         broker.detachIso()
-        mutableState.value = mutableState.value.copy(
+        mutableState.update { it.copy(
             usbAttached = false,
             usbHostConnected = false,
             activeIsoId = null,
             usbRecoveryRequired = false,
-        )
+        ) }
     }
 
-    suspend fun refreshUsbConnection() {
-        if (!mutableState.value.usbAttached) return
-        val connected = runCatching { broker.usbHostConnected() }.getOrDefault(false)
-        if (connected != mutableState.value.usbHostConnected) {
-            mutableState.value = mutableState.value.copy(usbHostConnected = connected)
+    suspend fun refreshUsbConnection() = operationMutex.withLock {
+        if (!broker.connected.value) {
+            invalidateDisconnectedSession()
+            return@withLock
         }
+        if (!state.value.usbAttached) return@withLock
+        val connected = runCatching { broker.usbHostConnected() }.getOrDefault(false)
+        mutableState.update { it.copy(usbHostConnected = connected && it.usbAttached) }
     }
 
     suspend fun shutdown() = runOperation("shutdown") {
         broker.shutdown()
-        mutableState.value = RuntimeState(rootAvailable = mutableState.value.rootAvailable)
+        mutableState.update { it.copy(networkRunning = false, usbAttached = false, usbHostConnected = false, activeIsoId = null, usbRecoveryRequired = false) }
     }
 
     fun shutdownAfterServiceDestroyed() { scope.launch { shutdown() } }
@@ -223,29 +242,43 @@ class RuntimeRepository @Inject constructor(
         .sortedBy { it.name }
     }
 
-    private suspend fun runOperation(operation: String, block: suspend () -> Unit) = operationMutex.withLock {
-        mutableState.value = mutableState.value.copy(busy = true, errorCode = null)
-        runCatching { block() }.onFailure { error ->
-            if (error is CancellationException) {
-                mutableState.value = mutableState.value.copy(busy = false, activeIsoId = if (operation == "attach_usb" && !mutableState.value.usbAttached) null else mutableState.value.activeIsoId)
-                throw error
-            }
+    private suspend fun runOperation(operation: String, block: suspend () -> Unit) = performOperation(operation) {
+        withOperationLock(block)
+    }
+
+    private suspend fun withOperationLock(block: suspend () -> Unit) = operationMutex.withLock {
+        if (!broker.connected.value) invalidateDisconnectedSession()
+        mutableState.update { it.copy(busy = true) }
+        try {
+            block()
+        } finally {
+            if (!broker.connected.value) invalidateDisconnectedSession()
+            mutableState.update { it.copy(busy = false) }
+        }
+    }
+
+    private suspend fun performOperation(operation: String, block: suspend () -> Unit) {
+        if (operation != "shutdown") mutableState.update { it.copy(errorCode = null) }
+        try {
+            block()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
             val code = normalizeError(error)
-            mutableState.value = mutableState.value.copy(
-                errorCode = code,
-                usbRecoveryRequired = mutableState.value.usbRecoveryRequired || code == "usb_restore_failed",
-                activeIsoId = if (operation == "attach_usb" && code != "usb_restore_failed" && !mutableState.value.usbAttached) null else mutableState.value.activeIsoId,
-            )
-            // Log device-specific details; the UI displays only the localized error code.
+            mutableState.update { it.copy(errorCode = code, usbRecoveryRequired = it.usbRecoveryRequired || code == "usb_restore_failed") }
             Log.w(LogTag, "$operation failed: code=$code detail=${error.message}")
             insertEvent(
-                severity = "error",
-                source = "runtime",
-                code = "operation_failed",
+                severity = "error", source = "runtime", code = "operation_failed",
                 argumentsJson = json.encodeToString(mapOf("operation" to operation, "code" to code, "detail" to (error.message ?: ""))),
             )
+        } finally {
+            if (operation == "attach_usb") mutableState.update {
+                if (!it.usbAttached && !it.usbRecoveryRequired) it.copy(activeIsoId = null) else it
+            }
         }
-        mutableState.value = mutableState.value.copy(busy = false)
+    }
+
+    private fun invalidateDisconnectedSession() {
+        mutableState.update(RuntimeState::disconnected)
     }
 
     /** Preserve broker error codes for the UI and full failure details for logs. */
@@ -275,7 +308,7 @@ class RuntimeRepository @Inject constructor(
         )
         // Expose recovery failures in UI state so the user can restore USB.
         if (code == "usb_restore_failed") {
-            mutableState.value = mutableState.value.copy(errorCode = code, usbRecoveryRequired = true, usbHostConnected = false)
+            mutableState.update { it.copy(errorCode = code, usbRecoveryRequired = true, usbHostConnected = false) }
         }
     }
 
@@ -336,6 +369,7 @@ class RuntimeRepository @Inject constructor(
         private val KnownCodes = setOf(
             "root_unavailable",
             "broker_start_failed",
+            "broker_disconnected",
             "network_interface_changed",
             "network_already_running",
             "profile_not_found",

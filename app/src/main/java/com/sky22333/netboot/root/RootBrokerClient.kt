@@ -22,6 +22,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -42,6 +44,8 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<BrokerMessage>>()
     private val mutableEvents = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val events = mutableEvents.asSharedFlow()
+    private val mutableConnected = MutableStateFlow(false)
+    val connected = mutableConnected.asStateFlow()
 
     @Volatile private var socket: LocalSocket? = null
     @Volatile private var output: DataOutputStream? = null
@@ -79,8 +83,11 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
 
     suspend fun shutdown() {
         if (socket == null) return
+        val connection = socket
         request(BrokerOperation.Shutdown)
-        closeConnection()
+        connectionMutex.withLock {
+            if (socket === connection) closeConnection()
+        }
     }
 
     private suspend fun request(operation: String, payload: String = ""): BrokerMessage = withContext(Dispatchers.IO) {
@@ -149,6 +156,7 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
                 throw BrokerException("broker_start_failed", lastError)
             }
             socket = connected
+            mutableConnected.value = true
             output = DataOutputStream(connected.outputStream.buffered())
             scope.launch { readMessages(connected, DataInputStream(connected.inputStream.buffered())) }
         }
@@ -166,15 +174,21 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
                 else message.id?.let { pending.remove(it)?.complete(message) }
             }
         } catch (_: EOFException) {
-            failPending()
+            // The connection owner below fails only requests from this session.
         } catch (error: Exception) {
-            failPending(error)
+            Log.w(LogTag, "Broker connection failed", error)
         } finally {
-            if (socket === connection) closeConnection()
+            connectionMutex.withLock {
+                if (socket === connection) {
+                    closeConnection()
+                    failPending()
+                }
+            }
         }
     }
 
-    private fun failPending(cause: Throwable = IOException("broker_disconnected")) {
+    private fun failPending() {
+        val cause = IOException("broker_disconnected")
         pending.values.forEach { it.completeExceptionally(cause) }
         pending.clear()
     }
@@ -182,6 +196,7 @@ class RootBrokerClient @Inject constructor(@ApplicationContext private val conte
     private fun closeConnection() {
         runCatching { socket?.close() }
         socket = null
+        mutableConnected.value = false
         output = null
         // EOF lets the broker finish USB recovery before exiting. Killing it here races cleanup.
         brokerProcess = null

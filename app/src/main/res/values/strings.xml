@@ -21,18 +21,15 @@
     <string name="dashboard_title">Your boot center</string>
     <string name="dashboard_ready">Boot your favorite OS, anytime, anywhere</string>
     <string name="dashboard_active">Service is running</string>
-    <string name="overview">Overview</string>
     <string name="quick_actions">Quick actions</string>
     <string name="image_dashboard_summary">Images %1$d · Downloads %2$d</string>
     <string name="ready_to_configure">Ready to configure</string>
-    <string name="root_access">Root access</string>
     <string name="available">Available</string>
     <string name="unavailable">Unavailable</string>
     <string name="usb_installer">USB installer</string>
     <string name="active">Active</string>
     <string name="not_checked">Not checked</string>
     <string name="pxe_service">PXE service</string>
-    <string name="stopped">Stopped</string>
     <string name="refresh_capabilities">Check device</string>
     <string name="windows_version">Windows version</string>
     <string name="language">Language</string>
@@ -52,7 +49,7 @@
     <string name="network_interface">Network interface</string>
     <string name="no_network_interface">No active IPv4 interface</string>
     <string name="dhcp_mode">DHCP mode</string>
-    <string name="proxy_dhcp">ProxyDHCP (recommended)</string>
+    <string name="proxy_dhcp">ProxyDHCP</string>
     <string name="full_dhcp">Full DHCP</string>
     <string name="dhcp_pool">Full DHCP address pool</string>
     <string name="dhcp_pool_start">Pool first address</string>
@@ -70,7 +67,6 @@
     <string name="start_pxe">Start PXE</string>
     <string name="stop_pxe">Stop PXE</string>
     <string name="pxe_files_hint">Tap a file to use it as the TFTP boot file.</string>
-    <string name="appearance">Appearance and transfer</string>
     <string name="theme">Theme</string>
     <string name="system_theme">Follow system</string>
     <string name="light_theme">Light</string>
@@ -78,7 +74,6 @@
     <string name="connections">Download connections</string>
     <string name="diagnostics">Diagnostics</string>
     <string name="runtime_logs">Logs</string>
-    <string name="runtime_logs_summary">Recent events: %1$d</string>
     <string name="no_logs">No logs yet. PXE and USB activity will appear here.</string>
     <string name="pause_follow">Pause follow</string>
     <string name="follow_latest">Follow latest</string>
@@ -121,7 +116,7 @@
     <string name="runtime_notification_detail">Tap to view PXE and USB status</string>
     <string name="save">Save</string>
     <string name="usb_confirmation_title">Use this phone as a USB boot drive?</string>
-    <string name="usb_confirmation_detail">Connect to a computer with a USB data cable to boot or install a system from the image. The drive is read-only and the original image stays unchanged. Any required preparation can be cancelled.\n\nFile transfer and USB debugging may disconnect temporarily. Stop USB boot in the app before unplugging.</string>
+    <string name="usb_confirmation_detail">Connect by USB to provide a read-only boot drive. Stop USB boot before unplugging.</string>
     <string name="usb_confirmation_action">Enable</string>
     <string name="media_stage_copy">Copying installation files</string>
     <string name="media_stage_extract">Reading the large Windows image</string>
@@ -153,15 +148,12 @@
     <string name="media_failed">Boot drive preparation failed. The original image is unchanged. Check free space and the logs, then retry.</string>
     <string name="confirm">Confirm</string>
     <string name="about">About</string>
-    <string name="about_summary">Network and USB boot for your devices</string>
     <string name="close">Close</string>
     <string name="state_queued">Queued</string>
     <string name="state_running">Downloading</string>
     <string name="state_paused">Paused</string>
     <string name="state_verifying">Verifying</string>
-    <string name="state_completed">Completed</string>
     <string name="state_failed">Failed</string>
-    <string name="state_cancelled">Cancelled</string>
     <string name="state_importing">Importing</string>
     <string name="state_ready">Ready</string>
     <string name="configuration_saved">Configuration saved</string>
@@ -221,4 +213,11 @@
     <string name="drivers_missing">Driver files are missing. Add them again.</string>
     <string name="drivers_directory_exists">The image already contains a $WinPEDriver$ folder. Remove the added drivers or use an original image.</string>
     <string name="drivers_unsupported_image">Including drivers requires a supported Windows or WinPE image.</string>
+    <string name="general">General</string>
+    <string name="usb_drivers_name">Drivers · %1$s</string>
+    <string name="boot_files">Boot files</string>
+    <string name="selected_file">Selected boot file</string>
+    <string name="log_warning">Warning</string>
+    <string name="root_status">Root access · %1$s</string>
+    <string name="runtime_error_disconnected">Service disconnected. Please start it again; restore USB first if needed.</string>
 </resources>

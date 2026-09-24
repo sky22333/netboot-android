@@ -55,6 +55,7 @@ func (s *server) start() error {
 
 	s.startedAt = time.Now()
 	s.http = newHTTPServer(s.cfg, s.sink)
+	s.http.ConnState = s.httpConnectionState
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -79,14 +80,26 @@ func (s *server) start() error {
 	return nil
 }
 
+// Count connections until their handlers return, not just until Serve exits.
+func (s *server) httpConnectionState(_ net.Conn, state http.ConnState) {
+	switch state {
+	case http.StateNew:
+		s.wg.Add(1)
+	case http.StateClosed, http.StateHijacked:
+		s.wg.Done()
+	}
+}
+
 func (s *server) stop(timeout time.Duration) error {
 	if s.cancel != nil {
 		s.cancel()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	var closeErr error
 	if s.http != nil {
-		_ = s.http.Shutdown(ctx)
+		// Explicit stop also ends active boot downloads.
+		closeErr = s.http.Close()
 	}
 	s.closeListeners()
 	done := make(chan struct{})
@@ -98,7 +111,7 @@ func (s *server) stop(timeout time.Duration) error {
 	case <-done:
 		s.sink.emit("info", "runtime", "netboot_stopped", nil)
 		s.sink.clear()
-		return nil
+		return closeErr
 	case <-ctx.Done():
 		s.sink.clear()
 		return errors.New("timed out stopping netboot")

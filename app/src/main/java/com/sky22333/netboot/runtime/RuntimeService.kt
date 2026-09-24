@@ -24,11 +24,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class RuntimeService : Service() {
     @Inject lateinit var runtime: RuntimeRepository
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var pendingCommands = 0
+    private var stateObserver: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -49,19 +53,24 @@ class RuntimeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: return START_NOT_STICKY
         startForegroundNow()
+        pendingCommands++
+        acquireWakeLock()
+        if (stateObserver == null) stateObserver = scope.launch {
+            runtime.state.collect { stopIfIdle() }
+        }
         scope.launch {
-            try { withSessionWakeLock {
-                when (action) {
-                    StartNetwork -> runtime.startNetwork(requireNotNull(intent.getStringExtra(ExtraId)))
-                    StopNetwork -> runtime.stopNetwork()
-                    AttachIso -> runtime.attachIso(requireNotNull(intent.getStringExtra(ExtraId)))
-                    DetachIso -> runtime.detachIso()
+            try {
+                withContext(Dispatchers.IO) {
+                    when (action) {
+                        StartNetwork -> runtime.startNetwork(requireNotNull(intent.getStringExtra(ExtraId)))
+                        StopNetwork -> runtime.stopNetwork()
+                        AttachIso -> runtime.attachIso(requireNotNull(intent.getStringExtra(ExtraId)))
+                        DetachIso -> runtime.detachIso()
+                    }
                 }
-            } } finally {
-            if (!runtime.state.value.busy && !runtime.state.value.networkRunning && !runtime.state.value.usbAttached && !runtime.state.value.usbRecoveryRequired) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
+            } finally {
+                pendingCommands--
+                stopIfIdle()
             }
         }
         return START_NOT_STICKY
@@ -76,13 +85,13 @@ class RuntimeService : Service() {
         super.onDestroy()
     }
 
-    /** Keep the lock while PXE or USB remains active; release it when both are idle. */
-    private suspend fun withSessionWakeLock(block: suspend () -> Unit) {
-        acquireWakeLock()
-        try {
-            block()
-        } finally {
-            if (!runtime.state.value.networkRunning && !runtime.state.value.usbAttached) releaseWakeLock()
+    private fun stopIfIdle() {
+        val state = runtime.state.value
+        if (pendingCommands != 0 || state.busy || state.usbPreparing || state.networkRunning || state.usbAttached) return
+        releaseWakeLock()
+        if (!state.usbRecoveryRequired) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
     }
 

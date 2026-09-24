@@ -21,18 +21,15 @@
     <string name="dashboard_title">你的启动中心</string>
     <string name="dashboard_ready">随时随地，启动你喜爱的系统</string>
     <string name="dashboard_active">服务正在运行</string>
-    <string name="overview">运行概览</string>
     <string name="quick_actions">快捷操作</string>
     <string name="image_dashboard_summary">镜像 %1$d · 下载 %2$d</string>
     <string name="ready_to_configure">可前往配置</string>
-    <string name="root_access">Root 权限</string>
     <string name="available">可用</string>
     <string name="unavailable">不可用</string>
     <string name="usb_installer">USB 安装盘</string>
     <string name="active">运行中</string>
     <string name="not_checked">尚未检测</string>
     <string name="pxe_service">PXE 服务</string>
-    <string name="stopped">已停止</string>
     <string name="refresh_capabilities">检测设备</string>
     <string name="windows_version">Windows 版本</string>
     <string name="language">语言</string>
@@ -52,7 +49,7 @@
     <string name="network_interface">网络接口</string>
     <string name="no_network_interface">没有可用的 IPv4 接口</string>
     <string name="dhcp_mode">DHCP 模式</string>
-    <string name="proxy_dhcp">ProxyDHCP（推荐）</string>
+    <string name="proxy_dhcp">ProxyDHCP</string>
     <string name="full_dhcp">完整 DHCP</string>
     <string name="dhcp_pool">完整 DHCP 地址池</string>
     <string name="dhcp_pool_start">地址池起始地址</string>
@@ -70,7 +67,6 @@
     <string name="start_pxe">启动 PXE</string>
     <string name="stop_pxe">停止 PXE</string>
     <string name="pxe_files_hint">点按文件可将其设为 TFTP 启动文件。</string>
-    <string name="appearance">外观与传输</string>
     <string name="theme">主题</string>
     <string name="system_theme">跟随系统</string>
     <string name="light_theme">浅色</string>
@@ -78,7 +74,6 @@
     <string name="connections">下载连接数</string>
     <string name="diagnostics">诊断</string>
     <string name="runtime_logs">日志</string>
-    <string name="runtime_logs_summary">最近事件：%1$d</string>
     <string name="no_logs">暂无日志。运行 PXE 或 USB 功能后可在此查看。</string>
     <string name="pause_follow">暂停跟随</string>
     <string name="follow_latest">跟随最新</string>
@@ -123,7 +118,7 @@
     <string name="runtime_notification_detail">点按查看 PXE 与 USB 状态</string>
     <string name="save">保存</string>
     <string name="usb_confirmation_title">将手机用作 USB 启动盘？</string>
-    <string name="usb_confirmation_detail">用数据线连接电脑，即可使用镜像启动或安装系统。启动盘只读，原始镜像不会修改；如需制作，可随时取消。\n\n文件传输和 USB 调试可能暂时断开。使用完毕后，请先在应用中停止 USB 启动，再拔线。</string>
+    <string name="usb_confirmation_detail">通过数据线向电脑提供USB启动盘。拔线前请先停止USB启动。</string>
     <string name="usb_confirmation_action">启用</string>
     <string name="media_stage_copy">正在复制安装文件</string>
     <string name="media_stage_extract">正在读取大容量 Windows 安装文件</string>
@@ -154,15 +149,12 @@
     <string name="media_failed">启动盘制作失败，原始镜像未修改。请检查可用空间和日志后重试。</string>
     <string name="confirm">确认</string>
     <string name="about">关于</string>
-    <string name="about_summary">为你的设备提供网络与 USB 启动</string>
     <string name="close">关闭</string>
     <string name="state_queued">等待下载</string>
     <string name="state_running">正在下载</string>
     <string name="state_paused">已暂停</string>
     <string name="state_verifying">正在校验</string>
-    <string name="state_completed">已完成</string>
     <string name="state_failed">失败</string>
-    <string name="state_cancelled">已取消</string>
     <string name="state_importing">正在导入</string>
     <string name="state_ready">可用</string>
     <string name="configuration_saved">配置已保存</string>
@@ -220,4 +212,11 @@
     <string name="drivers_missing">驱动文件缺失，请重新添加。</string>
     <string name="drivers_directory_exists">镜像已包含 $WinPEDriver$ 文件夹，请移除附加驱动或使用原版镜像。</string>
     <string name="drivers_unsupported_image">携带驱动需要可制作的 Windows 或 WinPE 镜像。</string>
+    <string name="general">通用</string>
+    <string name="usb_drivers_name">驱动 · %1$s</string>
+    <string name="boot_files">启动文件</string>
+    <string name="selected_file">已选启动文件</string>
+    <string name="log_warning">警告</string>
+    <string name="root_status">Root 权限 · %1$s</string>
+    <string name="runtime_error_disconnected">服务连接已断开，请重新启动；如需恢复 USB，请先恢复。</string>
 </resources>

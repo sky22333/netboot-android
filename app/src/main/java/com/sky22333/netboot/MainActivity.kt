@@ -12,8 +12,20 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.ExitTransition
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.FlowRowScope
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,18 +35,16 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
@@ -63,8 +73,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.widthIn
@@ -81,7 +91,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -132,9 +141,7 @@ import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.ThemeColorSpec
 import top.yukonga.miuix.kmp.theme.ThemeController
-import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -170,17 +177,16 @@ private fun SetSystemBarsToMiuixTheme() {
 private fun NetBootApp(viewModel: MainViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val mode = when (settings.themeMode) {
-        1 -> ColorSchemeMode.MonetLight
-        2 -> ColorSchemeMode.MonetDark
-        else -> ColorSchemeMode.MonetSystem
+        1 -> ColorSchemeMode.Light
+        2 -> ColorSchemeMode.Dark
+        else -> ColorSchemeMode.System
     }
     MiuixTheme(
         controller = remember(mode) {
             ThemeController(
                 colorSchemeMode = mode,
-                keyColor = Color(0xFF365F78),
-                colorSpec = ThemeColorSpec.Spec2025,
-                paletteStyle = ThemePaletteStyle.TonalSpot,
+                lightColors = appColors(false),
+                darkColors = appColors(true),
             )
         },
     ) {
@@ -205,7 +211,12 @@ private fun MainShell(viewModel: MainViewModel) {
     val titles = listOf(R.string.home, R.string.images, R.string.pxe, R.string.settings)
     val icons = listOf(Icons.Outlined.Home, Icons.Outlined.Image, Icons.Outlined.Lan, Icons.Outlined.Settings)
     val resources = LocalResources.current
-    val pageState = rememberSaveableStateHolder()
+    val pager = rememberPagerState(initialPage = selected, pageCount = { titles.size })
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(selected) {
+        focusManager.clearFocus()
+        pager.animateScrollToPage(selected)
+    }
     val wide = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() >= 600.dp }
     RequestNotificationPermissionOnce()
     LaunchedEffect(Unit) {
@@ -232,15 +243,18 @@ private fun MainShell(viewModel: MainViewModel) {
                     NavigationRailItem(selected == index, { selected = index }, icons[index], stringResource(title))
                 }
             }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.TopCenter) {
-                Box(Modifier.widthIn(max = 760.dp).fillMaxSize()) {
-                    pageState.SaveableStateProvider(selected) {
-                        when (selected) {
-            0 -> HomeScreen(viewModel, padding, onNavigate = { selected = it })
-            1 -> ImagesScreen(viewModel, padding)
-            2 -> PxeScreen(viewModel, padding, pxeForm, adapters, { pxeForm = it }, { editingScript = true })
-            else -> SettingsScreen(viewModel, padding)
-                        }
+            Box(Modifier.weight(1f).clipToBounds(), contentAlignment = Alignment.TopCenter) {
+                HorizontalPager(
+                    state = pager,
+                    modifier = Modifier.widthIn(max = 760.dp).fillMaxSize(),
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = false,
+                ) { page ->
+                    when (page) {
+                        0 -> HomeScreen(viewModel, padding, onNavigate = { selected = it })
+                        1 -> ImagesScreen(viewModel, padding)
+                        2 -> PxeScreen(viewModel, padding, pxeForm, adapters, { pxeForm = it }, { editingScript = true })
+                        else -> SettingsScreen(viewModel, padding)
                     }
                 }
             }
@@ -301,9 +315,9 @@ private fun ScriptEditorScreen(value: String, onSave: (String) -> Unit, onClose:
         }
     }
     OverlayDialog(show = confirmDiscard, title = stringResource(R.string.discard_changes), summary = stringResource(R.string.discard_changes_detail), onDismissRequest = { confirmDiscard = false }) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { confirmDiscard = false }) { Text(stringResource(R.string.cancel)) }
-            Button(onClick = onClose) { Text(stringResource(R.string.confirm)) }
+        ActionRow {
+            CompactButton({ confirmDiscard = false }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
+            CompactButton(onClose, Modifier.weight(1f), destructive = true) { Text(stringResource(R.string.confirm)) }
         }
     }
 }
@@ -313,7 +327,6 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
     val state by viewModel.runtime.collectAsStateWithLifecycle()
     val assets by viewModel.assets.collectAsStateWithLifecycle()
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
-    val metricColumns = if (LocalDensity.current.fontScale >= 1.5f) 1 else 3
     val activeDownloads = downloads.count { it.state in listOf(DownloadState.Queued, DownloadState.Running, DownloadState.Verifying) }
     LazyColumn(
         Modifier.fillMaxSize().padding(padding),
@@ -323,12 +336,8 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                cornerRadius = 12.dp,
-                insideMargin = PaddingValues(16.dp),
-                colors = CardDefaults.defaultColors(
-                    color = MiuixTheme.colorScheme.secondaryContainer,
-                    contentColor = MiuixTheme.colorScheme.onSecondaryContainer,
-                ),
+                cornerRadius = 24.dp,
+                insideMargin = PaddingValues(20.dp),
             ) {
                 Text(stringResource(R.string.dashboard_title), fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text(
@@ -336,51 +345,54 @@ private fun HomeScreen(viewModel: MainViewModel, padding: PaddingValues, onNavig
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+                if (state.usbPreparing || state.usbAttached || state.usbRecoveryRequired || state.networkRunning) {
+                    RuntimeControls(viewModel, Modifier.padding(top = 12.dp))
+                }
             }
         }
-        item { SectionTitle(stringResource(R.string.overview)) }
         item {
-            FlowRow(Modifier.fillMaxWidth(), maxItemsInEachRow = metricColumns, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                DashboardMetric(stringResource(R.string.root_access), when (state.rootAvailable) { true -> stringResource(R.string.available); false -> stringResource(R.string.unavailable); null -> stringResource(R.string.not_checked) }, state.rootAvailable == true, Modifier.weight(1f))
-                DashboardMetric(stringResource(R.string.pxe_service), if (state.networkRunning) stringResource(R.string.active) else stringResource(R.string.stopped), state.networkRunning, Modifier.weight(1f))
-                DashboardMetric(stringResource(R.string.usb_installer), usbInstallerSummary(state.usbAttached, state.usbHostConnected, state.usbUnsupported), state.usbAttached, Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.root_status, when (state.rootAvailable) {
+                        true -> stringResource(R.string.available)
+                        false -> stringResource(R.string.unavailable)
+                        null -> stringResource(R.string.not_checked)
+                    }),
+                    modifier = Modifier.weight(1f), fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                CompactIconButton(Icons.Outlined.Refresh, stringResource(R.string.refresh_capabilities), viewModel::refreshCapabilities, enabled = !state.busy && !state.usbPreparing)
             }
         }
         if (state.usbUnsupported) {
             item {
                 HintCard(
                     stringResource(R.string.usb_unsupported_summary, usbCapabilityReason(state.usbCapability?.reason)),
-                    warning = true,
                 )
             }
         }
-        if (state.usbAttached) {
-            item { HintCard(usbHostConnectedText(state.usbHostConnected), warning = true) }
-        }
-        if (state.usbPreparing || state.usbAttached || state.usbRecoveryRequired || state.networkRunning) item { RuntimeControls(viewModel) }
         item { SectionTitle(stringResource(R.string.quick_actions)) }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DashboardAction(stringResource(R.string.images), stringResource(R.string.image_dashboard_summary, assets.count { it.state == IsoState.Ready }, activeDownloads), Modifier.weight(1f)) { onNavigate(1) }
-                DashboardAction(stringResource(R.string.pxe), stringResource(if (state.networkRunning) R.string.active else R.string.ready_to_configure), Modifier.weight(1f)) { onNavigate(2) }
+            ActionRow {
+                DashboardAction(Icons.Outlined.Image, stringResource(R.string.images), stringResource(R.string.image_dashboard_summary, assets.count { it.state == IsoState.Ready }, activeDownloads), Modifier.weight(1f)) { onNavigate(1) }
+                DashboardAction(Icons.Outlined.Lan, stringResource(R.string.pxe), stringResource(if (state.networkRunning) R.string.active else R.string.ready_to_configure), Modifier.weight(1f)) { onNavigate(2) }
             }
         }
-        state.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), warning = true) } }
-        item { CompactButton(viewModel::refreshCapabilities, Modifier.fillMaxWidth(), enabled = !state.busy) { Text(stringResource(R.string.refresh_capabilities)) } }
+        state.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), error = true) } }
     }
 }
 
 @Composable
-private fun RuntimeControls(viewModel: MainViewModel) {
+private fun RuntimeControls(viewModel: MainViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.runtime.collectAsStateWithLifecycle()
     val assets by viewModel.assets.collectAsStateWithLifecycle()
     val activeFileName = assets.firstOrNull { it.id == state.activeIsoId }?.fileName
-    CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (state.usbPreparing) {
             BasicComponent(
                 title = stringResource(R.string.usb_installer),
                 summary = activeFileName,
-                insideMargin = PaddingValues(12.dp),
+                insideMargin = PaddingValues(0.dp),
                 endActions = {
                     CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelUsbPreparation)
                 },
@@ -390,8 +402,8 @@ private fun RuntimeControls(viewModel: MainViewModel) {
         if (state.usbAttached || state.usbRecoveryRequired) {
             BasicComponent(
                 title = stringResource(R.string.usb_installer),
-                summary = if (state.usbRecoveryRequired) runtimeErrorText("usb_restore_failed") else activeFileName,
-                insideMargin = PaddingValues(12.dp),
+                summary = if (state.usbRecoveryRequired) runtimeErrorText("usb_restore_failed") else listOfNotNull(activeFileName, usbHostConnectedText(state.usbHostConnected)).joinToString("\n"),
+                insideMargin = PaddingValues(0.dp),
                 enabled = !state.busy,
                 endActions = {
                     CompactIconButton(
@@ -406,7 +418,7 @@ private fun RuntimeControls(viewModel: MainViewModel) {
         if (state.networkRunning) {
             BasicComponent(
                 title = stringResource(R.string.pxe_service),
-                insideMargin = PaddingValues(12.dp),
+                insideMargin = PaddingValues(0.dp),
                 enabled = !state.busy,
                 endActions = {
                     CompactIconButton(Icons.Outlined.StopCircle, stringResource(R.string.stop_pxe), viewModel::stopNetwork, enabled = !state.busy)
@@ -417,33 +429,21 @@ private fun RuntimeControls(viewModel: MainViewModel) {
 }
 
 @Composable
-private fun DashboardMetric(title: String, value: String, active: Boolean, modifier: Modifier = Modifier) {
-    CompactCard(modifier, insideMargin = PaddingValues(12.dp)) {
-        Box(
-            Modifier.size(7.dp).background(
-                if (active) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.outline,
-                CircleShape,
-            ),
-        )
-        Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 9.dp))
-        Text(title, fontSize = 11.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-    }
-}
-
-@Composable
-private fun DashboardAction(title: String, summary: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun DashboardAction(icon: ImageVector, title: String, summary: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Card(
-        modifier = modifier.heightIn(min = 82.dp),
-        cornerRadius = 12.dp,
-        insideMargin = PaddingValues(14.dp),
+        modifier = modifier,
+        cornerRadius = 20.dp,
+        insideMargin = PaddingValues(16.dp),
         onClick = onClick,
-        colors = CardDefaults.defaultColors(
-            color = MiuixTheme.colorScheme.tertiaryContainer,
-            contentColor = MiuixTheme.colorScheme.onTertiaryContainer,
-        ),
+        showIndication = true,
     ) {
-        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        Text(summary, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(24.dp), tint = MiuixTheme.colorScheme.primary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(summary, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            }
+        }
     }
 }
 
@@ -480,12 +480,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                SectionTitle(stringResource(R.string.download_official))
-                Icon(Icons.Outlined.Image, null, tint = MiuixTheme.colorScheme.primary)
-            }
-        }
+        item { SectionTitle(stringResource(R.string.download_official)) }
         item {
             CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
                 OverlayDropdownPreference(items = WindowsVersion.entries.map { it.product }, selectedIndex = version.ordinal, title = stringResource(R.string.windows_version), onSelectedIndexChange = {
@@ -499,17 +494,19 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ActionRow {
                 CompactButton({ viewModel.download(version, language, architecture) }, Modifier.weight(1f), enabled = !downloadCreationBusy) { Text(stringResource(if (downloadCreationBusy) R.string.resolving_link else R.string.download_official)) }
                 CompactButton({ importLauncher.launch(arrayOf("application/x-iso9660-image", "application/octet-stream")) }, Modifier.weight(1f)) { Text(stringResource(R.string.import_iso)) }
             }
         }
         if (downloads.isNotEmpty()) item { SectionTitle(stringResource(R.string.download_tasks)) }
         items(downloads, key = { "download:${it.id}" }) { task ->
-            CompactCard(Modifier.fillMaxWidth()) {
+            CompactCard(Modifier.fillMaxWidth().animateItem(placementSpec = spring(dampingRatio = 1f, stiffness = 600f))) {
                 Text(assets.firstOrNull { it.id == task.isoAssetId }?.fileName.orEmpty(), fontWeight = FontWeight.Medium)
                 Text(downloadStateText(task.state), fontSize = 13.sp)
-                if (task.totalBytes > 0) {
+                if (task.state == DownloadState.Verifying) {
+                    LinearProgressIndicator()
+                } else if (task.totalBytes > 0) {
                     LinearProgressIndicator(progress = (task.downloadedBytes.toFloat() / task.totalBytes).coerceIn(0f, 1f))
                     Text(stringResource(R.string.transfer_progress, formatBytes(task.downloadedBytes), formatBytes(task.totalBytes)), fontSize = 12.sp)
                 }
@@ -521,29 +518,23 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                     if (task.state in listOf(DownloadState.Paused, DownloadState.Failed, DownloadState.Queued)) {
                         if (task.errorCode != "remote_file_changed") CompactIconButton(Icons.Outlined.PlayArrow, stringResource(R.string.resume), { viewModel.resumeDownload(task.id) })
                     }
-                    if (task.state !in listOf(DownloadState.Completed, DownloadState.Cancelled)) {
-                        CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), { pendingCancel = task.id })
-                    }
+                    CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), { pendingCancel = task.id })
                 }
             }
         }
         item { SectionTitle(stringResource(R.string.managed_images)) }
-        runtime.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), warning = true) } }
+        runtime.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), error = true) } }
         if (runtime.usbUnsupported) {
             item {
                 HintCard(
                     stringResource(R.string.usb_unsupported_summary, usbCapabilityReason(runtime.usbCapability?.reason)),
-                    warning = true,
                 )
             }
-        }
-        if (runtime.usbAttached) {
-            item { HintCard(usbHostConnectedText(runtime.usbHostConnected), warning = true) }
         }
         if (runtime.usbRecoveryRequired) item { RuntimeControls(viewModel) }
         if (assets.isEmpty()) item { Text(stringResource(R.string.no_images)) }
         items(assets.filter { asset -> downloads.none { it.isoAssetId == asset.id } }, key = { "asset:${it.id}" }) { asset ->
-            CompactCard(Modifier.fillMaxWidth()) {
+            CompactCard(Modifier.fillMaxWidth().animateItem(placementSpec = spring(dampingRatio = 1f, stiffness = 600f))) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(asset.fileName, fontWeight = FontWeight.Medium, fontSize = 15.sp)
@@ -567,12 +558,22 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                     PreparationProgress(runtime)
                     CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelUsbPreparation)
                 }
-                if (runtime.activeIsoId == asset.id && runtime.usbAttached) Text(stringResource(if (runtime.usbDiskMode) R.string.usb_disk_mode else R.string.usb_optical_mode), fontSize = 13.sp)
+                if (runtime.activeIsoId == asset.id && runtime.usbAttached) {
+                    Text(usbHostConnectedText(runtime.usbHostConnected), fontSize = 13.sp, color = MiuixTheme.colorScheme.primary)
+                    Text(stringResource(if (runtime.usbDiskMode) R.string.usb_disk_mode else R.string.usb_optical_mode), fontSize = 13.sp)
+                }
+                if (asset.driverName.isNotBlank()) Text(stringResource(R.string.usb_drivers_name, asset.driverName), fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                AnimatedVisibility(visible = driverImport?.assetId == asset.id, enter = fadeIn(tween(160)), exit = ExitTransition.None) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.usb_drivers_importing, formatBytes(driverImport?.bytes ?: 0)), Modifier.weight(1f), fontSize = 13.sp)
+                        CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelDriverImport)
+                    }
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (asset.state == IsoState.Ready) CompactIconButton(Icons.Outlined.Extension, stringResource(R.string.usb_drivers), { driverAssetId = asset.id }, enabled = !runtime.busy && !runtime.usbAttached && !runtime.usbRecoveryRequired)
-                    if (asset.state == IsoState.Ready && runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Usb, stringResource(R.string.attach_usb), { pendingAttach = asset.id }, enabled = driverImport == null && !runtime.usbUnsupported && !runtime.busy && !runtime.usbAttached && !runtime.usbRecoveryRequired)
+                    if (asset.state == IsoState.Ready) CompactIconButton(Icons.Outlined.Extension, stringResource(R.string.usb_drivers), { driverAssetId = asset.id }, enabled = !runtime.busy && !runtime.usbPreparing && !runtime.usbAttached && !runtime.usbRecoveryRequired)
+                    if (asset.state == IsoState.Ready && runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Usb, stringResource(R.string.attach_usb), { pendingAttach = asset.id }, enabled = driverImport == null && !runtime.usbUnsupported && !runtime.busy && !runtime.usbPreparing && !runtime.usbAttached && !runtime.usbRecoveryRequired)
                     if (runtime.activeIsoId == asset.id && runtime.usbAttached) CompactIconButton(Icons.Outlined.UsbOff, stringResource(R.string.detach_usb), viewModel::detachIso, enabled = !runtime.busy)
-                    if (runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Delete, stringResource(R.string.delete), { pendingDelete = asset.id }, enabled = driverImport == null && !runtime.busy && !runtime.usbRecoveryRequired && asset.state !in listOf(IsoState.Downloading, IsoState.Verifying, IsoState.Importing))
+                    if (runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Delete, stringResource(R.string.delete), { pendingDelete = asset.id }, enabled = driverImport == null && !runtime.busy && !runtime.usbPreparing && !runtime.usbRecoveryRequired && asset.state !in listOf(IsoState.Downloading, IsoState.Verifying, IsoState.Importing))
                 }
             }
         }
@@ -580,24 +581,27 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
     val driverAsset = assets.firstOrNull { it.id == driverAssetId }
     OverlayDialog(show = driverAsset != null, title = stringResource(R.string.usb_drivers), summary = stringResource(R.string.usb_drivers_detail), onDismissRequest = { driverAssetId = null }) {
         driverAsset?.let { asset ->
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                Modifier.heightIn(max = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() * 0.55f }).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(asset.driverName.ifEmpty { stringResource(R.string.usb_drivers_empty) })
                 if (driverImport?.assetId == asset.id) {
                     Text(stringResource(R.string.usb_drivers_importing, formatBytes(driverImport?.bytes ?: 0)))
                     CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelDriverImport)
                 } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         CompactIconButton(Icons.Outlined.Add, stringResource(R.string.usb_drivers_zip), {
                             driverPickerAssetId = asset.id
                             driverZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
-                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbAttached)
+                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbPreparing && !runtime.usbAttached)
                         CompactIconButton(Icons.Outlined.FolderOpen, stringResource(R.string.usb_drivers_folder), {
                             driverPickerAssetId = asset.id
                             driverDirectoryLauncher.launch(null)
-                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbAttached)
+                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbPreparing && !runtime.usbAttached)
                         if (asset.driverHash.isNotEmpty()) CompactIconButton(Icons.Outlined.Delete, stringResource(R.string.usb_drivers_remove), {
                             viewModel.changeDrivers(asset.id, null)
-                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbAttached)
+                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbPreparing && !runtime.usbAttached)
                     }
                 }
             }
@@ -643,7 +647,7 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
         summary = stringResource(R.string.usb_confirmation_detail),
         onDismissRequest = { pendingAttach = null },
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             CompactButton({ pendingAttach = null }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
             CompactButton({ pendingAttach?.let(viewModel::attachIso); pendingAttach = null }, Modifier.weight(1f)) { Text(stringResource(R.string.usb_confirmation_action)) }
         }
@@ -665,9 +669,9 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
         summary = stringResource(R.string.delete_image_detail),
         onDismissRequest = { pendingDelete = null },
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ActionRow {
             CompactButton({ pendingDelete = null }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
-            CompactButton({ pendingDelete?.let(viewModel::deleteIso); pendingDelete = null }, Modifier.weight(1f)) { Text(stringResource(R.string.delete)) }
+            CompactButton({ pendingDelete?.let(viewModel::deleteIso); pendingDelete = null }, Modifier.weight(1f), destructive = true) { Text(stringResource(R.string.delete)) }
         }
     }
 }
@@ -744,33 +748,52 @@ private fun PxeScreen(
                     enabled = adapters.isNotEmpty(),
                     onSelectedIndexChange = { onFormChanged(form.selectAdapter(adapters.getOrNull(it))) },
                 )
-                OverlayDropdownPreference(
-                    title = stringResource(R.string.dhcp_mode),
-                    items = listOf(stringResource(R.string.proxy_dhcp), stringResource(R.string.full_dhcp)),
-                    selectedIndex = if (selectedMode == BootMode.Proxy) 0 else 1,
-                    onSelectedIndexChange = { onFormChanged(form.copy(mode = if (it == 0) BootMode.Proxy else BootMode.Dhcp)) },
-                )
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextField(form.port, { onFormChanged(form.copy(port = it.filter(Char::isDigit).take(5))) }, Modifier.weight(1f), label = stringResource(R.string.http_port), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                CompactButton({ fileLauncher.launch(arrayOf("*/*")) }, Modifier.weight(1f)) { Text(stringResource(R.string.import_boot_files)) }
+            SectionTitle(stringResource(R.string.dhcp_mode))
+        }
+        item {
+            ActionRow {
+                listOf(BootMode.Proxy to R.string.proxy_dhcp, BootMode.Dhcp to R.string.full_dhcp).forEach { (mode, label) ->
+                    CompactButton(
+                        onClick = { onFormChanged(form.copy(mode = mode)) },
+                        modifier = Modifier.weight(1f).semantics { selected = selectedMode == mode },
+                    ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(20.dp)) {
+                                if (selectedMode == mode) Icon(Icons.Outlined.Check, null, Modifier.size(20.dp))
+                            }
+                            Text(stringResource(label), Modifier.weight(1f))
+                        }
+                    }
+                }
             }
         }
-        if (!form.portValid) item { HintCard(stringResource(R.string.http_port_invalid), warning = true) }
+        item {
+            TextField(form.port, { onFormChanged(form.copy(port = it.filter(Char::isDigit).take(5))) }, Modifier.fillMaxWidth(), label = stringResource(R.string.http_port), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        }
+        if (!form.portValid) item { HintCard(stringResource(R.string.http_port_invalid), error = true) }
         item { TextField(form.bootFile, { onFormChanged(form.copy(bootFile = it)) }, Modifier.fillMaxWidth(), label = stringResource(R.string.boot_file), singleLine = true) }
         item { Text(stringResource(R.string.boot_file_hint), fontSize = 12.sp) }
-        if (!bootFileValid) item { HintCard(stringResource(R.string.boot_file_not_imported), warning = true) }
+        if (!bootFileValid) item { HintCard(stringResource(R.string.boot_file_not_imported), error = true) }
         if (selectedMode == BootMode.Dhcp) {
             item { SectionTitle(stringResource(R.string.dhcp_pool)) }
             item { TextField(form.poolStart, { onFormChanged(form.copy(poolStart = it.filter { char -> char.isDigit() || char == '.' })) }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_start), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
             item { TextField(form.poolEnd, { onFormChanged(form.copy(poolEnd = it.filter { char -> char.isDigit() || char == '.' })) }, Modifier.fillMaxWidth(), label = stringResource(R.string.dhcp_pool_end), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
         }
+        if (selectedMode == BootMode.Dhcp && !form.poolValid) item { HintCard(stringResource(R.string.runtime_error_dhcp_pool), error = true) }
         item {
             CompactCard(Modifier.fillMaxWidth(), onClick = onEditScript) {
                 Text(stringResource(R.string.ipxe_script), fontWeight = FontWeight.Medium)
                 Text(form.script.lineSequence().take(3).joinToString("\n"), fontSize = 12.sp)
+            }
+        }
+        if (!form.scriptValid) item { HintCard(stringResource(R.string.invalid_ipxe_script), error = true) }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.boot_files), Modifier.weight(1f), fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                CompactIconButton(Icons.Outlined.Add, stringResource(R.string.import_boot_files), { fileLauncher.launch(arrayOf("*/*")) })
             }
         }
         item {
@@ -780,13 +803,16 @@ private fun PxeScreen(
                         title = file.name,
                         summary = if (file.builtIn) stringResource(R.string.built_in_file_summary, formatBytes(file.size)) else formatBytes(file.size),
                         onClick = { onFormChanged(form.copy(bootFile = file.name)) },
-                        endActions = { if (!file.builtIn) CompactIconButton(icon = Icons.Outlined.Delete, contentDescription = stringResource(R.string.delete), onClick = { viewModel.deletePxeFile(file.name) }) },
+                        endActions = {
+                            if (form.bootFile == file.name) Icon(Icons.Outlined.Check, stringResource(R.string.selected_file), Modifier.size(20.dp), tint = MiuixTheme.colorScheme.primary)
+                            if (!file.builtIn) CompactIconButton(icon = Icons.Outlined.Delete, contentDescription = stringResource(R.string.delete), onClick = { viewModel.deletePxeFile(file.name) })
+                        },
                     )
                 }
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ActionRow {
                 CompactButton({ adapter?.let { viewModel.saveProfile(selectedMode, it, portValue ?: 0, form.bootFile, form.script, form.poolStart, form.poolEnd) } }, Modifier.weight(1f), enabled = !runtime.busy && configurationValid) { Text(stringResource(R.string.save_configuration)) }
                 CompactButton(
                     onClick = {
@@ -801,11 +827,10 @@ private fun PxeScreen(
                     },
                     modifier = Modifier.weight(1f),
                     enabled = !runtime.busy && (runtime.networkRunning || configurationValid),
-                    primary = !runtime.networkRunning,
                 ) { Text(stringResource(if (runtime.networkRunning) R.string.stop_pxe else R.string.start_pxe)) }
             }
         }
-        runtime.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), warning = true) } }
+        runtime.errorCode?.let { error -> item { HintCard(runtimeErrorText(error), error = true) } }
         item { Text(stringResource(R.string.pxe_files_hint), fontSize = 12.sp) }
     }
 
@@ -835,27 +860,17 @@ private fun SettingsScreen(viewModel: MainViewModel, padding: PaddingValues) {
     val uriHandler = LocalUriHandler.current
     val openRepositoryLabel = stringResource(R.string.open_repository)
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val events by viewModel.events.collectAsStateWithLifecycle()
     var showAbout by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
-    var showClearLogs by remember { mutableStateOf(false) }
-    var followLogs by remember { mutableStateOf(true) }
-    val logListState = rememberLazyListState()
-    val chronologicalEvents = remember(events) { events.asReversed() }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         uri?.let(viewModel::exportLogs)
-    }
-    LaunchedEffect(showLogs, chronologicalEvents.lastOrNull()?.id, followLogs) {
-        if (showLogs && followLogs && chronologicalEvents.isNotEmpty()) {
-            logListState.scrollToItem(chronologicalEvents.lastIndex)
-        }
     }
     LazyColumn(
         Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { SectionTitle(stringResource(R.string.appearance)) }
+        item { SectionTitle(stringResource(R.string.general)) }
         item {
             CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
                 OverlayDropdownPreference(items = listOf(R.string.system_theme, R.string.light_theme, R.string.dark_theme).map { stringResource(it) }, selectedIndex = settings.themeMode, title = stringResource(R.string.theme), onSelectedIndexChange = viewModel::setTheme)
@@ -867,86 +882,98 @@ private fun SettingsScreen(viewModel: MainViewModel, padding: PaddingValues) {
             CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
                 CompactComponent(
                     title = stringResource(R.string.runtime_logs),
-                    summary = stringResource(R.string.runtime_logs_summary, events.size),
                     onClick = { showLogs = true },
                 )
             }
         }
         item {
             CompactCard(Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
-                CompactComponent(title = stringResource(R.string.about), summary = stringResource(R.string.about_summary), onClick = { showAbout = true })
+                CompactComponent(title = stringResource(R.string.about), onClick = { showAbout = true })
             }
         }
     }
-    OverlayDialog(
-        show = showLogs,
-        title = stringResource(R.string.runtime_logs),
-        onDismissRequest = { showLogs = false },
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CompactIconButton(
-                    icon = if (followLogs) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                    contentDescription = stringResource(if (followLogs) R.string.pause_follow else R.string.follow_latest),
-                    onClick = { followLogs = !followLogs },
-                )
-                CompactIconButton(
-                    icon = Icons.Outlined.ContentCopy,
-                    contentDescription = stringResource(R.string.copy_logs),
-                    onClick = viewModel::copyLogs,
-                    enabled = events.isNotEmpty(),
-                )
-                CompactIconButton(
-                    icon = Icons.Outlined.SaveAlt,
-                    contentDescription = stringResource(R.string.export_logs),
-                    onClick = { exportLauncher.launch("netboot-${System.currentTimeMillis()}.log") },
-                )
-                CompactIconButton(
-                    icon = Icons.Outlined.Delete,
-                    contentDescription = stringResource(R.string.clear_logs),
-                    onClick = { showClearLogs = true },
-                    enabled = events.isNotEmpty(),
-                )
-                Spacer(Modifier.weight(1f))
-                CompactIconButton(
-                    icon = Icons.Outlined.Close,
-                    contentDescription = stringResource(R.string.close),
-                    onClick = { showLogs = false },
-                )
+    if (showLogs) {
+        val events by viewModel.events.collectAsStateWithLifecycle()
+        var showClearLogs by remember { mutableStateOf(false) }
+        var followLogs by remember { mutableStateOf(true) }
+        val logListState = rememberLazyListState()
+        val chronologicalEvents = remember(events) { events.asReversed() }
+        val draggingLogs by logListState.interactionSource.collectIsDraggedAsState()
+        LaunchedEffect(draggingLogs) { if (draggingLogs) followLogs = false }
+        LaunchedEffect(chronologicalEvents.lastOrNull()?.id, followLogs) {
+            if (followLogs && chronologicalEvents.isNotEmpty()) {
+                logListState.scrollToItem(chronologicalEvents.lastIndex)
             }
-            Card(
-                // Miuix does not cap dialog height on phones; bound it so logs can scroll.
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() * 0.55f }),
-                cornerRadius = 12.dp,
-                insideMargin = PaddingValues(0.dp),
-                colors = CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surfaceContainer),
-            ) {
-                if (chronologicalEvents.isEmpty()) {
-                    Text(
-                        stringResource(R.string.no_logs),
-                        modifier = Modifier.padding(14.dp),
-                        fontSize = 12.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        }
+        OverlayDialog(
+            show = showLogs,
+            title = stringResource(R.string.runtime_logs),
+            onDismissRequest = { showLogs = false },
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CompactIconButton(
+                        icon = if (followLogs) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                        contentDescription = stringResource(if (followLogs) R.string.pause_follow else R.string.follow_latest),
+                        onClick = { followLogs = !followLogs },
                     )
-                } else {
-                    LazyColumn(state = logListState, modifier = Modifier.fillMaxWidth()) {
-                        items(chronologicalEvents, key = { "log:${it.id}" }) { event -> LogLine(event) }
+                    CompactIconButton(
+                        icon = Icons.Outlined.ContentCopy,
+                        contentDescription = stringResource(R.string.copy_logs),
+                        onClick = viewModel::copyLogs,
+                        enabled = events.isNotEmpty(),
+                    )
+                    CompactIconButton(
+                        icon = Icons.Outlined.SaveAlt,
+                        contentDescription = stringResource(R.string.export_logs),
+                        onClick = { exportLauncher.launch("netboot-${System.currentTimeMillis()}.log") },
+                    )
+                    CompactIconButton(
+                        icon = Icons.Outlined.Delete,
+                        contentDescription = stringResource(R.string.clear_logs),
+                        onClick = { showClearLogs = true },
+                        enabled = events.isNotEmpty(),
+                    )
+                    CompactIconButton(
+                        icon = Icons.Outlined.Close,
+                        contentDescription = stringResource(R.string.close),
+                        onClick = { showLogs = false },
+                    )
+                }
+                Card(
+                    // Miuix does not cap dialog height on phones; bound it so logs can scroll.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() * 0.55f }),
+                    cornerRadius = 16.dp,
+                    insideMargin = PaddingValues(0.dp),
+                    colors = CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surfaceContainer),
+                ) {
+                    if (chronologicalEvents.isEmpty()) {
+                        Text(
+                            stringResource(R.string.no_logs),
+                            modifier = Modifier.padding(14.dp),
+                            fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    } else {
+                        LazyColumn(state = logListState, modifier = Modifier.fillMaxWidth()) {
+                            items(chronologicalEvents, key = { "log:${it.id}" }) { event -> LogLine(event) }
+                        }
                     }
                 }
             }
         }
-    }
-    OverlayDialog(
-        show = showClearLogs,
-        title = stringResource(R.string.clear_logs_title),
-        summary = stringResource(R.string.clear_logs_detail),
-        onDismissRequest = { showClearLogs = false },
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CompactButton({ showClearLogs = false }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
-            CompactButton({ viewModel.clearLogs(); showClearLogs = false }, Modifier.weight(1f)) { Text(stringResource(R.string.clear_logs)) }
+        OverlayDialog(
+            show = showClearLogs,
+            title = stringResource(R.string.clear_logs_title),
+            summary = stringResource(R.string.clear_logs_detail),
+            onDismissRequest = { showClearLogs = false },
+        ) {
+            ActionRow {
+                CompactButton({ showClearLogs = false }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
+                CompactButton({ viewModel.clearLogs(); showClearLogs = false }, Modifier.weight(1f), destructive = true) { Text(stringResource(R.string.clear_logs)) }
+            }
         }
     }
     OverlayDialog(
@@ -993,27 +1020,22 @@ private fun LogLine(event: RuntimeEventEntity) {
             Json.parseToJsonElement(event.argumentsJson).jsonObject.mapValues { it.value.jsonPrimitive.content }
         }.getOrDefault(emptyMap())
     }
-    val color = when (event.severity) {
-        "error" -> scheme.error
-        "warning" -> scheme.onTertiaryContainer
-        else -> scheme.onSurface
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    val color = if (event.severity == "error") scheme.error else scheme.onSurface
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            android.text.format.DateFormat.format("HH:mm:ss", event.timestamp).toString(),
-            modifier = Modifier.width(57.dp),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            color = scheme.onSurfaceVariantSummary,
-        )
-        Column(Modifier.weight(1f)) {
-            Text("${event.source.uppercase()} · ${logEventTitle(event.eventCode)}", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = color)
-            logEventDetail(event.eventCode, arguments).takeIf(String::isNotBlank)?.let {
-                Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = scheme.onSurfaceVariantSummary)
-            }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                android.text.format.DateFormat.format("HH:mm:ss", event.timestamp).toString(),
+                fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+                color = scheme.onSurfaceVariantSummary,
+            )
+            if (event.severity == "warning") Icon(Icons.Outlined.WarningAmber, stringResource(R.string.log_warning), Modifier.size(16.dp), tint = color)
+            Text("${event.source.uppercase()} · ${logEventTitle(event.eventCode)}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = color)
+        }
+        logEventDetail(event.eventCode, arguments).takeIf(String::isNotBlank)?.let {
+            Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = scheme.onSurfaceVariantSummary)
         }
     }
 }
@@ -1060,31 +1082,51 @@ private fun logEventDetail(code: String, values: Map<String, String>): String = 
 }
 
 @Composable
+private fun ActionRow(content: @Composable FlowRowScope.() -> Unit) {
+    val fontScale = LocalDensity.current.fontScale
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            maxItemsInEachRow = if (maxWidth / fontScale < 320.dp) 1 else 2,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            content = content,
+        )
+    }
+}
+
+@Composable
 private fun CompactCard(
     modifier: Modifier = Modifier,
-    insideMargin: PaddingValues = PaddingValues(12.dp),
+    insideMargin: PaddingValues = PaddingValues(16.dp),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) = Card(
     modifier = modifier,
-    cornerRadius = 12.dp,
+    cornerRadius = 16.dp,
     insideMargin = insideMargin,
     onClick = onClick,
-    content = content,
+    showIndication = onClick != null,
+    content = { Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = content) },
 )
 
 @Composable
-private fun HintCard(text: String, warning: Boolean = false) {
+private fun HintCard(text: String, error: Boolean = false) {
     val scheme = MiuixTheme.colorScheme
     Card(
         modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 12.dp,
+        cornerRadius = 16.dp,
         insideMargin = PaddingValues(12.dp),
         colors = CardDefaults.defaultColors(
-            color = if (warning) scheme.tertiaryContainer else scheme.secondaryContainer,
-            contentColor = if (warning) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
+            color = if (error) scheme.errorContainer else scheme.surfaceContainer,
+            contentColor = if (error) scheme.onErrorContainer else scheme.onSurfaceContainer,
         ),
-    ) { Text(text, fontSize = 13.sp) }
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            Icon(if (error) Icons.Outlined.WarningAmber else Icons.Outlined.Info, null, Modifier.size(20.dp))
+            Text(text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        }
+    }
 }
 
 @Composable
@@ -1092,14 +1134,17 @@ private fun CompactButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    primary: Boolean = false,
+    destructive: Boolean = false,
     content: @Composable RowScope.() -> Unit,
 ) = Button(
     onClick = onClick,
     modifier = modifier,
     enabled = enabled,
-    colors = if (primary) ButtonDefaults.buttonColorsPrimary() else ButtonDefaults.buttonColors(),
-    cornerRadius = 12.dp,
+    colors = when {
+        destructive -> ButtonDefaults.buttonColors(color = MiuixTheme.colorScheme.errorContainer, contentColor = MiuixTheme.colorScheme.onErrorContainer)
+        else -> ButtonDefaults.buttonColors()
+    },
+    cornerRadius = 24.dp,
     minHeight = 48.dp,
     insideMargin = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
     content = content,
@@ -1114,11 +1159,11 @@ private fun CompactIconButton(
     enabled: Boolean = true,
 ) = IconButton(
     onClick = onClick,
-    modifier = modifier,
+    modifier = modifier.semantics { if (!enabled) disabled() },
     enabled = enabled,
     minWidth = 48.dp,
     minHeight = 48.dp,
-    cornerRadius = 12.dp,
+    cornerRadius = 24.dp,
 ) {
     Icon(
         imageVector = icon,
@@ -1127,7 +1172,7 @@ private fun CompactIconButton(
         tint = if (enabled) {
             MiuixTheme.colorScheme.onSurface
         } else {
-            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+            MiuixTheme.colorScheme.disabledOnSurface
         },
     )
 }
@@ -1158,9 +1203,8 @@ private fun downloadStateText(state: String): String = stringResource(
         DownloadState.Running -> R.string.state_running
         DownloadState.Paused -> R.string.state_paused
         DownloadState.Verifying -> R.string.state_verifying
-        DownloadState.Completed -> R.string.state_completed
         DownloadState.Failed -> R.string.state_failed
-        else -> R.string.state_cancelled
+        else -> error("Unexpected visible download state: $state")
     },
 )
 
@@ -1187,6 +1231,7 @@ private fun runtimeErrorText(code: String): String = stringResource(
         "range_mismatch", "invalid_content_range", "size_mismatch" -> R.string.download_integrity_failed
         "network_or_storage_error" -> R.string.download_connection_failed
         "broker_start_failed" -> R.string.runtime_error_broker
+        "broker_disconnected" -> R.string.runtime_error_disconnected
         "network_interface_changed" -> R.string.runtime_error_network_changed
         "network_already_running" -> R.string.runtime_error_already_running
         "http_port_unavailable" -> R.string.runtime_error_http_port
@@ -1223,14 +1268,6 @@ private fun usbCapabilityReason(code: String?): String = stringResource(
         else -> R.string.runtime_error_usb_unsupported
     },
 )
-
-@Composable
-private fun usbInstallerSummary(attached: Boolean, hostConnected: Boolean, unsupported: Boolean): String = when {
-    unsupported -> stringResource(R.string.unavailable)
-    attached && hostConnected -> stringResource(R.string.usb_state_host_connected)
-    attached -> stringResource(R.string.usb_state_mapped)
-    else -> stringResource(R.string.stopped)
-}
 
 @Composable
 private fun usbHostConnectedText(hostConnected: Boolean): String =

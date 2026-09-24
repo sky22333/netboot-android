@@ -56,37 +56,18 @@ internal class RemoteFileProbe(private val client: OkHttpClient) {
         }
     }
 
-    fun probe(url: String): RemoteMetadata {
-        val response = execute(
-            Request.Builder().url(url).header("Range", "bytes=0-0").header("Accept-Encoding", "identity").build(),
-        )
-        response.use {
-            if (it.code == 403) throw HttpStatusException(403)
-            if (it.code == 206) {
-                val total = parseContentRangeTotal(it.header("Content-Range"))
-                return RemoteMetadata(total, true, it.header("ETag"), it.header("Last-Modified"))
-            }
-            if (it.code == 200) {
-                val total = it.body.contentLength()
+    suspend fun probe(url: String): RemoteMetadata = transfer(
+        Request.Builder().url(url).header("Range", "bytes=0-0").header("Accept-Encoding", "identity").build(),
+    ) { response ->
+        when (response.code) {
+            206 -> RemoteMetadata(parseContentRangeTotal(response.header("Content-Range")), true, response.header("ETag"), response.header("Last-Modified"))
+            200 -> {
+                val total = response.body.contentLength()
                 if (total <= 0) throw DownloadException("unknown_file_size")
-                return RemoteMetadata(total, false, it.header("ETag"), it.header("Last-Modified"))
+                RemoteMetadata(total, false, response.header("ETag"), response.header("Last-Modified"))
             }
-            throw HttpStatusException(it.code)
+            else -> throw HttpStatusException(response.code)
         }
-    }
-
-    /** Validate every redirect against the Microsoft host allow-list. */
-    internal fun execute(request: Request, redirects: Int = 0): Response {
-        if (redirects > MaxRedirects) throw DownloadException("too_many_redirects")
-        MicrosoftHosts.requireOfficial(request.url.toString())
-        val response = client.newCall(request).execute()
-        if (response.code !in 300..399) return response
-        val location = response.header("Location")
-        response.close()
-        if (location == null) throw DownloadException("redirect_without_location")
-        val target = request.url.resolve(location)?.toString() ?: throw DownloadException("invalid_redirect")
-        MicrosoftHosts.requireOfficial(target)
-        return execute(request.newBuilder().url(target).build(), redirects + 1)
     }
 
     companion object {

@@ -21,7 +21,6 @@
 /app/src/androidTest/java/com/sky22333/netboot/MainActivityTest.kt
 /app/src/androidTest/java/com/sky22333/netboot/data/DownloadIntegrityTest.kt
 /app/src/test/java/com/sky22333/netboot/data/UsbMediaLayoutTest.kt
-/app/src/test/java/com/sky22333/netboot/download/RemoteFileProbeTest.kt
 /app/src/test/java/com/sky22333/netboot/download/TransferValidationTest.kt
 /core-go/mobilecore/proxy_test.go
 *.hprof
