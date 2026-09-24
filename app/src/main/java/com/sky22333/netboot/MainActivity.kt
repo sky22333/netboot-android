@@ -42,6 +42,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Usb
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.UsbOff
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Delete
@@ -452,6 +454,19 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
     val runtime by viewModel.runtime.collectAsStateWithLifecycle()
     val downloadCreationBusy by viewModel.downloadCreationBusy.collectAsStateWithLifecycle()
     val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
+    val driverImport by viewModel.driverImport.collectAsStateWithLifecycle()
+    var driverAssetId by rememberSaveable { mutableStateOf<String?>(null) }
+    var driverPickerAssetId by rememberSaveable { mutableStateOf<String?>(null) }
+    val driverZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = driverPickerAssetId
+        if (uri != null && id != null) viewModel.changeDrivers(id, uri)
+        driverPickerAssetId = null
+    }
+    val driverDirectoryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val id = driverPickerAssetId
+        if (uri != null && id != null) viewModel.changeDrivers(id, uri)
+        driverPickerAssetId = null
+    }
     var version by rememberSaveable { mutableStateOf(WindowsVersion.Windows11) }
     var language by rememberSaveable { mutableStateOf(IsoLanguage.Chinese) }
     var architecture by rememberSaveable { mutableStateOf(IsoArchitecture.X64) }
@@ -554,9 +569,36 @@ private fun ImagesScreen(viewModel: MainViewModel, padding: PaddingValues) {
                 }
                 if (runtime.activeIsoId == asset.id && runtime.usbAttached) Text(stringResource(if (runtime.usbDiskMode) R.string.usb_disk_mode else R.string.usb_optical_mode), fontSize = 13.sp)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (asset.state == IsoState.Ready && runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Usb, stringResource(R.string.attach_usb), { pendingAttach = asset.id }, enabled = !runtime.usbUnsupported && !runtime.busy && !runtime.usbAttached && !runtime.usbRecoveryRequired)
+                    if (asset.state == IsoState.Ready) CompactIconButton(Icons.Outlined.Extension, stringResource(R.string.usb_drivers), { driverAssetId = asset.id }, enabled = !runtime.busy && !runtime.usbAttached && !runtime.usbRecoveryRequired)
+                    if (asset.state == IsoState.Ready && runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Usb, stringResource(R.string.attach_usb), { pendingAttach = asset.id }, enabled = driverImport == null && !runtime.usbUnsupported && !runtime.busy && !runtime.usbAttached && !runtime.usbRecoveryRequired)
                     if (runtime.activeIsoId == asset.id && runtime.usbAttached) CompactIconButton(Icons.Outlined.UsbOff, stringResource(R.string.detach_usb), viewModel::detachIso, enabled = !runtime.busy)
-                    if (runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Delete, stringResource(R.string.delete), { pendingDelete = asset.id }, enabled = !runtime.busy && !runtime.usbRecoveryRequired && asset.state !in listOf(IsoState.Downloading, IsoState.Verifying, IsoState.Importing))
+                    if (runtime.activeIsoId != asset.id) CompactIconButton(Icons.Outlined.Delete, stringResource(R.string.delete), { pendingDelete = asset.id }, enabled = driverImport == null && !runtime.busy && !runtime.usbRecoveryRequired && asset.state !in listOf(IsoState.Downloading, IsoState.Verifying, IsoState.Importing))
+                }
+            }
+        }
+    }
+    val driverAsset = assets.firstOrNull { it.id == driverAssetId }
+    OverlayDialog(show = driverAsset != null, title = stringResource(R.string.usb_drivers), summary = stringResource(R.string.usb_drivers_detail), onDismissRequest = { driverAssetId = null }) {
+        driverAsset?.let { asset ->
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(asset.driverName.ifEmpty { stringResource(R.string.usb_drivers_empty) })
+                if (driverImport?.assetId == asset.id) {
+                    Text(stringResource(R.string.usb_drivers_importing, formatBytes(driverImport?.bytes ?: 0)))
+                    CompactIconButton(Icons.Outlined.Close, stringResource(R.string.cancel), viewModel::cancelDriverImport)
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CompactIconButton(Icons.Outlined.Add, stringResource(R.string.usb_drivers_zip), {
+                            driverPickerAssetId = asset.id
+                            driverZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbAttached)
+                        CompactIconButton(Icons.Outlined.FolderOpen, stringResource(R.string.usb_drivers_folder), {
+                            driverPickerAssetId = asset.id
+                            driverDirectoryLauncher.launch(null)
+                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbAttached)
+                        if (asset.driverHash.isNotEmpty()) CompactIconButton(Icons.Outlined.Delete, stringResource(R.string.usb_drivers_remove), {
+                            viewModel.changeDrivers(asset.id, null)
+                        }, enabled = driverImport == null && !runtime.busy && !runtime.usbAttached)
+                    }
                 }
             }
         }
@@ -1136,6 +1178,10 @@ private fun imageStateText(state: String): String = stringResource(
 @Composable
 private fun runtimeErrorText(code: String): String = stringResource(
     when (code) {
+        "drivers_missing" -> R.string.drivers_missing
+        "drivers_invalid" -> R.string.drivers_invalid
+        "drivers_directory_exists" -> R.string.drivers_directory_exists
+        "drivers_unsupported_image" -> R.string.drivers_unsupported_image
         "root_unavailable" -> R.string.runtime_error_root
         "remote_file_changed" -> R.string.remote_file_changed
         "range_mismatch", "invalid_content_range", "size_mismatch" -> R.string.download_integrity_failed
@@ -1192,6 +1238,12 @@ private fun usbHostConnectedText(hostConnected: Boolean): String =
         "\n" + stringResource(R.string.usb_attached_warning)
 
 private fun messageResource(code: String): Int = when (code) {
+    "drivers_saved" -> R.string.drivers_saved
+    "drivers_no_inf" -> R.string.drivers_no_inf
+    "drivers_invalid" -> R.string.drivers_invalid
+    "drivers_missing" -> R.string.drivers_missing
+    "drivers_unsupported_image", "media_udf_unreadable", "media_windows_layout" -> R.string.drivers_unsupported_image
+    "media_file_too_large" -> R.string.media_file_too_large
     "import_complete" -> R.string.import_complete
     "media_invalid_iso", "not_iso" -> R.string.media_invalid_image
     "empty_source" -> R.string.empty_source

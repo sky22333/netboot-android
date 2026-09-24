@@ -19,6 +19,8 @@ data class IsoAssetEntity(
     val sha256: String,
     val createdAt: Long,
     val state: String,
+    val driverHash: String = "",
+    val driverName: String = "",
 )
 
 @Entity(

@@ -1,6 +1,8 @@
 package com.sky22333.netboot.runtime
 
 import android.content.Context
+import android.net.Uri
+import com.sky22333.netboot.data.DriverRepository
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
@@ -82,10 +84,13 @@ class RuntimeRepository @Inject constructor(
     private val broker: RootBrokerClient,
     private val isoRepository: IsoRepository,
     private val usbMedia: UsbMediaRepository,
+    private val drivers: DriverRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operationMutex = Mutex()
+    // Driver imports must not hold up PXE controls.
+    private val mediaMutex = Mutex()
     private val eventsSincePrune = AtomicInteger()
     @Volatile private var preparationJob: Job? = null
     private val mutableState = MutableStateFlow(RuntimeState())
@@ -96,13 +101,16 @@ class RuntimeRepository @Inject constructor(
         scope.launch { pruneEvents() }
     }
 
-    suspend fun probe() = runOperation("probe") {
-        try {
-            val capability = broker.probe()
-            mutableState.value = mutableState.value.copy(rootAvailable = true, usbCapability = capability)
-        } catch (error: BrokerException) {
-            if (error.code != "root_unavailable") throw error
-            mutableState.value = mutableState.value.copy(rootAvailable = false, usbCapability = null)
+    suspend fun probe() = mediaMutex.withLock {
+        runOperation("probe") {
+            drivers.recover()
+            try {
+                val capability = broker.probe()
+                mutableState.value = mutableState.value.copy(rootAvailable = true, usbCapability = capability)
+            } catch (error: BrokerException) {
+                if (error.code != "root_unavailable") throw error
+                mutableState.value = mutableState.value.copy(rootAvailable = false, usbCapability = null)
+            }
         }
     }
 
@@ -122,34 +130,43 @@ class RuntimeRepository @Inject constructor(
         mutableState.value = mutableState.value.copy(networkRunning = false)
     }
 
-    suspend fun attachIso(isoId: String) = runOperation("attach_usb") {
-        check(!mutableState.value.usbAttached && !mutableState.value.usbRecoveryRequired) { "image_in_use" }
-        val asset = database.isoDao().find(isoId) ?: error("asset_not_found")
-        check(asset.state == IsoState.Ready) { "image_in_use" }
-        insertEvent(severity = "info", source = "media", code = "media_inspection", argumentsJson = json.encodeToString(
-            mapOf("source" to asset.source, "bytes" to asset.fileSize.toString(), "sha256" to asset.sha256),
-        ))
-        mutableState.value = mutableState.value.copy(activeIsoId = isoId)
-        val media = try {
-            preparationJob = currentCoroutineContext()[Job]
-            mutableState.value = mutableState.value.copy(usbPreparing = true, preparedBytes = 0, preparationTotal = 0, preparationStage = UsbPreparationStage.CopyFiles)
-            usbMedia.prepare(asset) { stage, done, total ->
-                mutableState.value = mutableState.value.copy(preparedBytes = done, preparationTotal = total, preparationStage = stage)
+    suspend fun attachIso(isoId: String) = mediaMutex.withLock {
+        runOperation("attach_usb") {
+            check(!mutableState.value.usbAttached && !mutableState.value.usbRecoveryRequired) { "image_in_use" }
+            val asset = database.isoDao().find(isoId) ?: error("asset_not_found")
+            check(asset.state == IsoState.Ready) { "image_in_use" }
+            insertEvent(severity = "info", source = "media", code = "media_inspection", argumentsJson = json.encodeToString(
+                mapOf("source" to asset.source, "bytes" to asset.fileSize.toString(), "sha256" to asset.sha256),
+            ))
+            mutableState.value = mutableState.value.copy(activeIsoId = isoId)
+            val media = try {
+                preparationJob = currentCoroutineContext()[Job]
+                mutableState.value = mutableState.value.copy(usbPreparing = true, preparedBytes = 0, preparationTotal = 0, preparationStage = UsbPreparationStage.CopyFiles)
+                usbMedia.prepare(asset) { stage, done, total ->
+                    mutableState.value = mutableState.value.copy(preparedBytes = done, preparationTotal = total, preparationStage = stage)
+                }
+            } finally {
+                preparationJob = null
+                mutableState.value = mutableState.value.copy(usbPreparing = false)
             }
-        } finally {
-            preparationJob = null
-            mutableState.value = mutableState.value.copy(usbPreparing = false)
+            broker.attachIso(media.file, media.cdrom)
+            mutableState.value = mutableState.value.copy(
+                usbAttached = true,
+                usbHostConnected = runCatching { broker.usbHostConnected() }.getOrDefault(false),
+                activeIsoId = isoId,
+                usbDiskMode = !media.cdrom,
+            )
         }
-        broker.attachIso(media.file, media.cdrom)
-        mutableState.value = mutableState.value.copy(
-            usbAttached = true,
-            usbHostConnected = runCatching { broker.usbHostConnected() }.getOrDefault(false),
-            activeIsoId = isoId,
-            usbDiskMode = !media.cdrom,
-        )
     }
 
     fun cancelUsbPreparation() { preparationJob?.cancel() }
+
+    suspend fun changeDrivers(id: String, uri: Uri?, progress: (Long) -> Unit) = mediaMutex.withLock {
+        check(!mutableState.value.usbAttached && !mutableState.value.usbRecoveryRequired) { "image_in_use" }
+        val asset = database.isoDao().find(id) ?: error("asset_not_found")
+        check(asset.state == IsoState.Ready) { "image_in_use" }
+        drivers.replace(asset, uri, progress)
+    }
 
     suspend fun detachIso() = runOperation("detach_usb") {
         broker.detachIso()
@@ -176,10 +193,12 @@ class RuntimeRepository @Inject constructor(
 
     fun shutdownAfterServiceDestroyed() { scope.launch { shutdown() } }
 
-    suspend fun deleteIso(id: String): Boolean = operationMutex.withLock {
-        val active = mutableState.value.activeIsoId?.let { database.isoDao().find(it) }
-        val target = database.isoDao().find(id)
-        if (mutableState.value.activeIsoId == id || mutableState.value.usbRecoveryRequired || (active != null && active.sha256 == target?.sha256)) false else isoRepository.delete(id)
+    suspend fun deleteIso(id: String): Boolean = mediaMutex.withLock {
+        operationMutex.withLock {
+            val active = mutableState.value.activeIsoId?.let { database.isoDao().find(it) }
+            val target = database.isoDao().find(id)
+            if (mutableState.value.activeIsoId == id || mutableState.value.usbRecoveryRequired || (active != null && active.sha256 == target?.sha256)) false else isoRepository.delete(id)
+        }
     }
 
     fun observeInterfaces() = callbackFlow {

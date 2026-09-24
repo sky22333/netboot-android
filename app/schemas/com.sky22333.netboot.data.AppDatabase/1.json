@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "fa6b4136c5740ee51fff6c02145eeffc",
+    "identityHash": "4d5452c7df7d98ff79fa0b033cd7a386",
     "entities": [
       {
         "tableName": "iso_assets",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `product` TEXT NOT NULL, `edition` TEXT NOT NULL, `language` TEXT NOT NULL, `architecture` TEXT NOT NULL, `source` TEXT NOT NULL, `fileName` TEXT NOT NULL, `filePath` TEXT NOT NULL, `fileSize` INTEGER NOT NULL, `sha256` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `state` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `product` TEXT NOT NULL, `edition` TEXT NOT NULL, `language` TEXT NOT NULL, `architecture` TEXT NOT NULL, `source` TEXT NOT NULL, `fileName` TEXT NOT NULL, `filePath` TEXT NOT NULL, `fileSize` INTEGER NOT NULL, `sha256` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `state` TEXT NOT NULL, `driverHash` TEXT NOT NULL, `driverName` TEXT NOT NULL, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -77,6 +77,18 @@
           {
             "fieldPath": "state",
             "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "driverHash",
+            "columnName": "driverHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "driverName",
+            "columnName": "driverName",
             "affinity": "TEXT",
             "notNull": true
           }
@@ -416,7 +428,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fa6b4136c5740ee51fff6c02145eeffc')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4d5452c7df7d98ff79fa0b033cd7a386')"
     ]
   }
 }

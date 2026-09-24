@@ -69,6 +69,10 @@ class MainViewModel @Inject constructor(
     private val mutableDownloadCreationBusy = MutableStateFlow(false)
     val downloadCreationBusy = mutableDownloadCreationBusy.asStateFlow()
     val importProgress = isoRepository.importProgress
+    data class DriverImport(val assetId: String, val bytes: Long = 0)
+    private val mutableDriverImport = MutableStateFlow<DriverImport?>(null)
+    val driverImport = mutableDriverImport.asStateFlow()
+    private var driverJob: Job? = null
     private val imports = ConcurrentHashMap<String, Job>()
     private val mutableMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = mutableMessages.asSharedFlow()
@@ -102,6 +106,38 @@ class MainViewModel @Inject constructor(
     }
 
     fun cancelImport(id: String) { imports[id]?.cancel() }
+
+    fun changeDrivers(id: String, uri: Uri?) {
+        if (driverJob?.isActive == true) return
+        driverJob = viewModelScope.launch {
+            mutableDriverImport.value = DriverImport(id)
+            var lastUpdate = 0L
+            try {
+                runtimeRepository.changeDrivers(id, uri) { bytes ->
+                    val now = System.nanoTime()
+                    if (now - lastUpdate >= 250_000_000L) {
+                        mutableDriverImport.value = DriverImport(id, bytes)
+                        lastUpdate = now
+                    }
+                }
+                mutableMessages.emit("drivers_saved")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: java.io.IOException) {
+                mutableMessages.emit(error.message ?: "drivers_invalid")
+            } catch (_: SecurityException) {
+                mutableMessages.emit("source_unavailable")
+            } catch (error: IllegalArgumentException) {
+                mutableMessages.emit("drivers_invalid")
+            } catch (error: IllegalStateException) {
+                mutableMessages.emit(error.message ?: "operation_failed")
+            } finally {
+                mutableDriverImport.value = null
+            }
+        }
+    }
+
+    fun cancelDriverImport() { driverJob?.cancel() }
 
     fun download(version: WindowsVersion, language: IsoLanguage, architecture: IsoArchitecture) {
         if (downloadCreationBusy.value) return

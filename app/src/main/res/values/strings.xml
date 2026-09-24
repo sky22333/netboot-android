@@ -105,7 +105,7 @@
     <string name="log_http_request">HTTP request</string>
     <string name="log_operation_failed">Operation failed</string>
     <string name="log_event">Runtime event</string>
-    <string name="about_description">Download and manage system images, serve PXE boot files over your local network, and use your phone as read-only USB installation media. Requires KernelSU authorization; device and computer support may vary.</string>
+    <string name="about_description">Download and manage system images, serve PXE boot files over your local network, and use your phone as read-only USB installation media. Requires root permission; device and computer support may vary.</string>
     <string name="app_version">Version %1$s</string>
     <string name="open_repository">Open GitHub repository</string>
     <string name="download_channel">ISO downloads</string>
@@ -177,8 +177,8 @@
     <string name="delete_image_title">Delete this image?</string>
     <string name="delete_image_detail">The image saved in this app and its download record will be permanently deleted. This cannot be undone.</string>
     <string name="built_in_file_summary">Built in · %1$s</string>
-    <string name="runtime_error_root">Grant Root access to NetBoot in KernelSU, then try again.</string>
-    <string name="runtime_error_broker">The privileged service could not start. Check the NetBoot authorization in KernelSU.</string>
+    <string name="runtime_error_root">Grant this app Root access, then try again.</string>
+    <string name="runtime_error_broker">Service could not start. Check this app’s Root permission.</string>
     <string name="runtime_error_network_changed">The selected network is no longer available. Select the current connection and try again.</string>
     <string name="runtime_error_http_port">The HTTP port is already in use. Choose another port.</string>
     <string name="runtime_error_tftp_port">TFTP port 69 is already in use. Stop the conflicting service and try again.</string>
@@ -208,4 +208,17 @@
     <string name="log_usb_restore_failed">USB restore failed</string>
     <string name="log_export_failed">The log file could not be written</string>
     <string name="empty_source">The selected file is empty. Choose another file.</string>
+    <string name="usb_drivers">Include drivers</string>
+    <string name="usb_drivers_detail">Add a complete driver package for Windows or WinPE. After booting, load it from the Drivers folder on the media.</string>
+    <string name="usb_drivers_empty">No drivers added</string>
+    <string name="usb_drivers_zip">Choose driver ZIP</string>
+    <string name="usb_drivers_folder">Choose driver folder</string>
+    <string name="usb_drivers_remove">Remove drivers</string>
+    <string name="usb_drivers_importing">Preparing drivers · %1$s</string>
+    <string name="drivers_saved">Driver settings saved</string>
+    <string name="drivers_no_inf">No INF driver found. Choose a complete driver package.</string>
+    <string name="drivers_invalid">Driver package cannot be used. Check its file names or choose another package.</string>
+    <string name="drivers_missing">Driver files are missing. Add them again.</string>
+    <string name="drivers_directory_exists">The image already contains a Drivers folder. Remove the added drivers or use an original image.</string>
+    <string name="drivers_unsupported_image">Including drivers requires a supported Windows or WinPE image.</string>
 </resources>

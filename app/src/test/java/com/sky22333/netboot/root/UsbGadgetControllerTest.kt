@@ -4,6 +4,7 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import com.sky22333.netboot.data.UsbMediaCache
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -208,5 +209,56 @@ class UsbGadgetControllerTest {
         assertEquals("1", File(gadget, "functions/mass_storage.netboot/lun.0/ro").readText().trim())
         assertTrue(controller.isAttached())
         assertTrue(controller.restore().complete)
+    }
+
+    @Test fun `prepared driver media attaches read only and can be reused after restore`() {
+        val controller = fixture(KernelIo())
+        val media = File(managed, "media").apply { mkdir() }
+        val image = File(media, "${"a".repeat(64)}-${"b".repeat(64)}-v1.img")
+        val mbr = java.nio.ByteBuffer.allocate(512).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        mbr.put(450, 0x0c); mbr.putInt(454, 1); mbr.putInt(458, 2047)
+        mbr.put(510, 0x55); mbr.put(511, 0xaa.toByte())
+        java.io.RandomAccessFile(image, "rw").use { it.setLength(1024 * 1024); it.write(mbr.array()) }
+        repeat(2) {
+            controller.attach(image.path, false)
+            val lun = File(gadget, "functions/mass_storage.netboot/lun.0")
+            assertEquals("1", File(lun, "ro").readText().trim())
+            assertEquals("0", File(lun, "cdrom").readText().trim())
+            assertEquals(image.canonicalPath, File(lun, "file").readText().trim())
+            assertTrue(controller.isAttached())
+            assertTrue(controller.restore().complete)
+            assertFalse(state.exists())
+            assertTrue(File(config, "adb").exists())
+            assertTrue(image.isFile)
+        }
+    }
+
+    @Test fun `producer cache names pass broker validation with and without drivers`() {
+        fixture(KernelIo())
+        val media = File(managed, "media").apply { mkdir() }
+        for (driver in listOf("", "b".repeat(64))) {
+            val name = UsbMediaCache.fileName("A".repeat(64), driver)
+            val expected = "a".repeat(64) + (if (driver.isEmpty()) "" else "-$driver") + "-v1.img"
+            assertEquals(expected, name)
+            val image = File(media, name).apply { writeText("placeholder") }
+            assertEquals(image.canonicalFile, UsbGadgetController.validateBackingFile(managed, image))
+        }
+    }
+
+    @Test fun `cache allowlist rejects incomplete names wrong directories and invalid disk contents`() {
+        val controller = fixture(KernelIo())
+        val media = File(managed, "media").apply { mkdir() }
+        val name = UsbMediaCache.fileName("a".repeat(64), "b".repeat(64))
+        for (invalid in listOf("installer.img", "$name.part", name.replace("-v1", "-v2"), name.replace("b".repeat(64), "b".repeat(63)))) {
+            val file = File(media, invalid).apply { writeText("x") }
+            assertEquals("not_iso", assertThrows(UsbException::class.java) { controller.attach(file.path, false) }.code)
+        }
+        val misplaced = File(managed, name).apply { writeText("x") }
+        assertThrows(UsbException::class.java) { controller.attach(misplaced.path, false) }
+        val invalidDisk = File(media, name).apply { writeText("not a disk") }
+        assertEquals("media_invalid_disk", assertThrows(UsbException::class.java) { controller.attach(invalidDisk.path, false) }.code)
+        assertFalse(state.exists())
+        assertEquals("controller", File(gadget, "UDC").readText().trim())
+        assertFalse(File(gadget, "functions/mass_storage.netboot").exists())
     }
 }

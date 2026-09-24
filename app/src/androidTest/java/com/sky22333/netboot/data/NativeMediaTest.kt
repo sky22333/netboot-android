@@ -78,6 +78,26 @@ class NativeMediaTest {
         }
     }
 
+    @Test fun driversShareTheInstallationDiskAndPreserveTheirContents() = fixture { root, iso ->
+        val sourceHash = IsoRepository.sha256(iso)
+        val drivers = listOf(File(root, "driver.inf"), File(root, "driver.sys"), File(root, "driver.cat"))
+        drivers.forEachIndexed { index, file -> file.writeText("driver fixture $index") }
+        val image = File(root, "disk.img")
+        ParcelFileDescriptor.open(iso, ParcelFileDescriptor.MODE_READ_ONLY).use { input ->
+            ParcelFileDescriptor.open(image, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_READ_WRITE).use { output ->
+                NativeMedia.buildWindows(input.fd, output.fd, root.path, object : MediaProgress {
+                    override fun onProgress(stage: Int, done: Long, total: Long) = true
+                    override fun openDriver(index: Int) = ParcelFileDescriptor.open(drivers[index], ParcelFileDescriptor.MODE_READ_ONLY).detachFd()
+                }, drivers.map { "Storage/${it.name}" }.toTypedArray(), drivers.map { it.length() }.toLongArray())
+            }
+        }
+        FatReader(image).use { disk ->
+            assertEquals("test fixture: setup.exe", disk.read("SETUP.EXE").decodeToString())
+            drivers.forEach { assertArrayEquals(it.readBytes(), disk.read("DRIVERS/STORAGE/${it.name.uppercase()}")) }
+        }
+        assertEquals(sourceHash, IsoRepository.sha256(iso))
+    }
+
     @Test fun oversizedWimBecomesMultipleSetupReadableSwmFiles() = fixture { root, iso ->
         val image = File(root, "disk.img")
         val stages = mutableListOf<Int>()

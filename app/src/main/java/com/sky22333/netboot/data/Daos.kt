@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface IsoDao {
+    @Query("SELECT * FROM iso_assets")
+    suspend fun all(): List<IsoAssetEntity>
+
     @Query("SELECT * FROM iso_assets WHERE source = 'import' AND state IN ('importing', 'verifying')")
     suspend fun interruptedImports(): List<IsoAssetEntity>
 
@@ -26,6 +29,9 @@ interface IsoDao {
 
     @Query("UPDATE iso_assets SET state = :state WHERE id = :id")
     suspend fun setState(id: String, state: String)
+
+    @Query("UPDATE iso_assets SET driverHash = :hash, driverName = :name WHERE id = :id")
+    suspend fun setDrivers(id: String, hash: String, name: String)
 
     @Query("DELETE FROM iso_assets WHERE id = :id AND state NOT IN ('downloading', 'verifying', 'importing')")
     suspend fun deleteIfIdle(id: String): Int

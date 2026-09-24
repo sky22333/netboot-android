@@ -34,6 +34,7 @@ data class ImportProgress(val bytes: Long, val total: Long, val verifying: Boole
 class IsoRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     database: AppDatabase,
+    private val driverRepository: DriverRepository,
 ) {
     private val dao = database.isoDao()
     private val isoDirectory = File(context.filesDir, "iso")
@@ -160,6 +161,7 @@ class IsoRepository @Inject constructor(
         if (asset.state in setOf(IsoState.Downloading, IsoState.Verifying, IsoState.Importing)) {
             return@withContext false
         }
+        driverRepository.delete(id)
         val file = File(asset.filePath)
         for (suffix in listOf(".part", ".importing")) {
             Files.deleteIfExists(File(asset.filePath + suffix).toPath())
@@ -167,11 +169,10 @@ class IsoRepository @Inject constructor(
         if (asset.sha256.matches(Regex("[a-fA-F0-9]{64}"))) {
             val media = File(isoDirectory, "media")
             if (java.nio.file.Files.isSymbolicLink(media.toPath())) throw IOException("media_not_regular")
-            val cache = File(media, "${asset.sha256.lowercase()}-v1.img")
-            if (cache.exists() && !cache.delete()) return@withContext false
-            val work = File(media, "${asset.sha256.lowercase()}-work")
-            if (java.nio.file.Files.isSymbolicLink(work.toPath())) throw IOException("media_not_regular")
-            if (work.exists() && !work.deleteRecursively()) return@withContext false
+            for (cached in media.listFiles().orEmpty().filter { it.name.startsWith(asset.sha256.lowercase() + "-") }) {
+                if (Files.isSymbolicLink(cached.toPath())) throw IOException("media_not_regular")
+                if (!cached.deleteRecursively()) return@withContext false
+            }
         }
         if (file.exists() && !file.delete()) {
             return@withContext false

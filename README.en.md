@@ -2,12 +2,12 @@
 
 [简体中文](README.md) | English
 
-Turn an Android phone authorized by KernelSU into a **PXE boot server** or a **read-only USB boot device**.
+Turn an Android phone with root permission into a **PXE boot server** or a **read-only USB boot device**.
 Download Windows ISOs from Microsoft, import local images, and pause and resume downloads.
 
 ## Requirements
 
-- Android 8.0 or later, with KernelSU permission for this app to use `su`. The app checks existing permissions on startup; it does not install or patch root software.
+- Android 8.0 or later, with permission from your root manager for this app to use `su`. The app checks existing permissions on startup; it does not install or patch root software.
 - PXE: connect the phone and computer to the same local network, with communication between devices allowed. The computer must support network boot.
 - USB: connect the phone to the computer with a data cable. The phone's kernel and USB configuration must support adding a mass storage function.
 
@@ -27,6 +27,17 @@ The default menu requires internet access to download installation resources. IS
 4. When finished, stop USB boot in the app and wait for the phone's USB configuration to be restored before unplugging the cable. If restoration fails, retry; if it still fails, restart the phone.
 
 Do not switch USB modes while USB boot is active. File transfer and USB debugging may temporarily disconnect. Compatibility depends on the image, computer firmware, and phone drivers.
+
+### Optional: include Windows drivers
+
+Use the image's **Include drivers** icon to choose a ZIP or folder containing the complete INF, SYS, CAT files and their directory structure. This requires a supported Windows installation ISO or official WinPE UDF ISO. Match drivers to the target Windows/WinPE architecture; extract EXE installers first.
+
+- If Setup cannot see the disk, choose **Load driver** and browse the media's `Drivers` folder.
+- In WinPE, run `drvload D:\Drivers\folder\driver.inf` using the actual drive letter. After loading a network driver, run `wpeutil InitializeNetwork`.
+
+Drivers share the same read-only USB disk with the installation files, without requiring network access. Adding drivers requires media preparation; subsequent starts reuse a cache keyed by image and driver contents. Preparation is cancellable, failed replacement preserves the previous drivers, and deleting the image removes its drivers and media caches. Generated media targets UEFI; drivers are not automatically injected into WIM files or installed Windows. Create official WinPE ISOs with Microsoft's ADK / WinPE add-on and import them into the app.
+
+References: [Setup drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/installing-a-boot-start-driver), [Drvload](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/drvload-command-line-options), [Create WinPE media](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe-create-usb-bootable-drive).
 
 ## Preview
 

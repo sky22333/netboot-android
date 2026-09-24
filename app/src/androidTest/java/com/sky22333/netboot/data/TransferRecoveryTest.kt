@@ -11,6 +11,8 @@ import com.sky22333.netboot.download.DownloadRepository
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.async
@@ -32,6 +34,7 @@ class TransferRecoveryTest {
     private lateinit var directory: File
     private lateinit var database: AppDatabase
     private lateinit var images: IsoRepository
+    private lateinit var drivers: DriverRepository
     private lateinit var downloads: DownloadRepository
     private lateinit var source: File
 
@@ -43,7 +46,8 @@ class TransferRecoveryTest {
             override fun getFilesDir(): File = directory
         }
         database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
-        images = IsoRepository(context, database)
+        drivers = DriverRepository(context, database)
+        images = IsoRepository(context, database, drivers)
         val offline = OkHttpClient.Builder().addInterceptor { throw AssertionError("Recovery must not request an expired URL") }.build()
         downloads = DownloadRepository(database, images, MicrosoftIsoCatalog(offline), offline)
         source = File(directory, "source.iso")
@@ -56,6 +60,48 @@ class TransferRecoveryTest {
     fun cleanup() {
         database.close()
         directory.deleteRecursively()
+    }
+
+    @Test
+    fun driverReplacementCancellationRecoveryAndRemovalPreserveSelection() = runBlocking {
+        val id = images.import(Uri.fromFile(source))
+        val zip = File(directory, "drivers.zip")
+        fun packageWith(content: String) {
+            ZipOutputStream(zip.outputStream()).use {
+                it.putNextEntry(ZipEntry("Storage/driver.inf"))
+                it.write(content.toByteArray())
+                it.closeEntry()
+            }
+        }
+        packageWith("original")
+        drivers.replace(requireNotNull(database.isoDao().find(id)), Uri.fromFile(zip)) {}
+        val selected = requireNotNull(database.isoDao().find(id))
+        assertEquals("original", drivers.files(selected).single().readText())
+        packageWith("replacement")
+        val job = launch {
+            val coroutine = currentCoroutineContext()
+            drivers.replace(selected, Uri.fromFile(zip)) { coroutine.cancel() }
+        }
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(selected.driverHash, database.isoDao().find(id)?.driverHash)
+        assertEquals("original", drivers.files(selected).single().readText())
+        zip.writeText("not a ZIP")
+        try {
+            drivers.replace(selected, Uri.fromFile(zip)) {}
+            fail("Invalid replacement accepted")
+        } catch (_: IOException) {
+            assertEquals(selected.driverHash, database.isoDao().find(id)?.driverHash)
+            assertEquals("original", drivers.files(selected).single().readText())
+        }
+        val abandoned = File(directory, "drivers/$id/importing").apply { mkdirs() }
+        File(abandoned, "partial").writeText("interrupted")
+        drivers.recover()
+        assertFalse(abandoned.exists())
+        assertEquals("original", drivers.files(selected).single().readText())
+        drivers.replace(selected, null) {}
+        assertEquals("", database.isoDao().find(id)?.driverHash)
+        assertFalse(File(directory, "drivers/$id").exists())
     }
 
     @Test

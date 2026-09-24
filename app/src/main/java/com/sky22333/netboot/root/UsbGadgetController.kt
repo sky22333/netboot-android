@@ -7,6 +7,7 @@ import java.nio.file.Files
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import com.sky22333.netboot.data.UsbMediaLayout
+import com.sky22333.netboot.data.UsbMediaCache
 
 data class RestoreResult(val hadState: Boolean, val failures: List<String>) {
     val complete: Boolean get() = failures.isEmpty()
@@ -223,7 +224,7 @@ class UsbGadgetController(
             if (file == root || !file.path.startsWith(root.path + File.separator)) throw UsbException("iso_outside_private_storage")
             if (!file.isFile || file.length() == 0L) throw UsbException("iso_not_regular_file")
             val source = file.parentFile == root && file.extension.equals("iso", true)
-            val prepared = file.parentFile == File(root, "media") && file.name.matches(Regex("[a-f0-9]{64}-v1\\.img"))
+            val prepared = file.parentFile == File(root, "media") && UsbMediaCache.isPreparedFileName(file.name)
             if (!source && !prepared) throw UsbException("not_iso")
             return file
         }

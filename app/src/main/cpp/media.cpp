@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <set>
 extern "C" {
 #include "udfread.h"
 #include "blockinput.h"
@@ -104,16 +105,19 @@ void enumerate(udfread* udf, const std::string& path, std::vector<Entry>& out, i
     }
 }
 bool windows(const std::vector<Entry>& entries) {
-    bool setup = false, boot = false, efi = false, image = false;
+    bool setup = false, boot = false, efi = false, image = false, bcd = false, sdi = false;
     for (const auto& e : entries) {
         if (e.directory) continue;
         auto p = lower(e.path);
         setup |= p == "/setup.exe";
         boot |= p == "/sources/boot.wim";
+        bcd |= p == "/boot/bcd";
+        sdi |= p == "/boot/boot.sdi";
         efi |= p == "/efi/boot/bootx64.efi" || p == "/efi/boot/bootaa64.efi" || p == "/efi/boot/bootia32.efi";
         image |= p == "/sources/install.wim" || p == "/sources/install.esd" || p == "/sources/install.swm";
     }
     if (setup && boot && efi && image) return true;
+    if (!setup && !image && boot && efi && bcd && sdi) return true; // Official standalone WinPE.
     if (setup || boot) {
         throw std::runtime_error(std::string("media_windows_layout:missing=") +
             (!setup ? "setup.exe;" : "") + (!boot ? "sources/boot.wim;" : "") +
@@ -160,21 +164,24 @@ void copyUdf(udfread* udf, const Entry& entry, FatFile* fat, int fd, Progress& p
         progress.advance(n);
     }
 }
-void copyFile(const std::string& source, const std::string& dest, Progress& progress) {
-    Fd fd(open(source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-    regular(fd.value);
+void copyDescriptor(int fd, const std::string& dest, Progress& progress) {
+    regular(fd);
     struct stat s{};
-    require(fstat(fd.value, &s) == 0 && s.st_size >= 0 && static_cast<uint64_t>(s.st_size) <= FatLimit, "media_file_too_large");
+    require(fstat(fd, &s) == 0 && s.st_size >= 0 && static_cast<uint64_t>(s.st_size) <= FatLimit, "media_file_too_large");
     FatFile out(dest);
     std::vector<uint8_t> buffer(BufferSize);
     uint64_t pos = 0;
     while (pos < static_cast<uint64_t>(s.st_size)) {
         size_t n = std::min<uint64_t>(buffer.size(), s.st_size-pos);
-        require(transfer(fd.value, buffer.data(), n, pos, false), "media_read_failed");
+        require(transfer(fd, buffer.data(), n, pos, false), "media_read_failed");
         out.write(buffer.data(), n);
         pos += n; progress.advance(n);
     }
     out.finish();
+}
+void copyFile(const std::string& source, const std::string& dest, Progress& progress) {
+    Fd fd(open(source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+    copyDescriptor(fd.value, dest, progress);
 }
 enum wimlib_progress_status wimProgress(enum wimlib_progress_msg message, union wimlib_progress_info* info, void* p) {
     auto& progress = *static_cast<Progress*>(p);
@@ -244,7 +251,7 @@ void splitInstall(udfread* udf, const Entry& e, const std::string& work, Progres
         require(f_stat(("/sources/"+part.path).c_str(), &info) == FR_OK && info.fsize == part.size, "media_verify_failed");
     }
 }
-void build(int input, int output, const std::string& work, Progress& progress, uint64_t fileLimit = FatLimit) {
+void build(int input, int output, const std::string& work, Progress& progress, uint64_t fileLimit = FatLimit, const std::vector<Entry>& drivers = {}) {
     std::lock_guard<std::mutex> lock(buildMutex);
     regular(output);
     require(getuid() != 0, "media_root_forbidden");
@@ -257,6 +264,10 @@ void build(int input, int output, const std::string& work, Progress& progress, u
     for (const auto& e : entries) {
         require(e.size < 64ULL*1024*1024*1024, "media_file_too_large");
         total += e.size;
+    }
+    if (!drivers.empty()) {
+        for (const auto& e : entries) require(lower(e.path) != "/drivers", "drivers_directory_exists");
+        for (const auto& e : drivers) total += e.size;
     }
     require(total < 128ULL*1024*1024*1024, "media_file_too_large");
     // Reserve sparse image capacity for expanded WIM data and FAT metadata.
@@ -271,6 +282,7 @@ void build(int input, int output, const std::string& work, Progress& progress, u
     require(f_mount(&fs, "", 1) == FR_OK, "media_format_failed");
     uint64_t copyBytes = 0;
     for (const auto& e : entries) if (e.size <= fileLimit) copyBytes += e.size;
+    for (const auto& e : drivers) copyBytes += e.size;
     progress.begin(0, copyBytes);
     const Entry* large = nullptr;
     for (const auto& e : entries) {
@@ -285,6 +297,26 @@ void build(int input, int output, const std::string& work, Progress& progress, u
         copyUdf(udf.get(), e, &out, -1, progress);
         out.finish();
     }
+    if (!drivers.empty()) {
+        const auto openDriver = progress.env->GetMethodID(progress.env->GetObjectClass(progress.callback), "openDriver", "(I)I");
+        require(openDriver != nullptr, "media_callback_failed");
+        require(f_mkdir("/Drivers") == FR_OK, "media_write_failed");
+        std::set<std::string> directories;
+        for (size_t i = 0; i < drivers.size(); ++i) {
+            const auto path = "/Drivers/" + drivers[i].path;
+            for (size_t slash = path.find('/', 9); slash != std::string::npos; slash = path.find('/', slash + 1)) {
+                const auto directory = path.substr(0, slash);
+                if (directories.insert(lower(directory)).second) require(f_mkdir(directory.c_str()) == FR_OK, "media_write_failed");
+            }
+            const auto value = progress.env->CallIntMethod(progress.callback, openDriver, static_cast<jint>(i));
+            require(!progress.env->ExceptionCheck(), "media_read_failed");
+            Fd fd(value);
+            struct stat s{};
+            regular(fd.value);
+            require(fstat(fd.value, &s) == 0 && s.st_size >= 0 && static_cast<uint64_t>(s.st_size) == drivers[i].size, "media_source_changed");
+            copyDescriptor(fd.value, path, progress);
+        }
+    }
     if (large) splitInstall(udf.get(), *large, work, progress, std::min<uint64_t>(3800ULL*1024*1024, fileLimit));
     progress.begin(5);
     require(fsync(output) == 0, "media_write_failed");
@@ -294,6 +326,10 @@ void build(int input, int output, const std::string& work, Progress& progress, u
         if (e.directory || &e == large) continue;
         FILINFO info{};
         require(f_stat(e.path.c_str(), &info) == FR_OK && info.fsize == e.size, "media_verify_failed");
+    }
+    for (const auto& e : drivers) {
+        FILINFO info{};
+        require(f_stat(("/Drivers/" + e.path).c_str(), &info) == FR_OK && info.fsize == e.size, "media_verify_failed");
     }
 }
 void fail(JNIEnv* env, const char* message) {
@@ -351,15 +387,31 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_sky22333_netboot_data_NativeMedia
         return windows(entries);
     } catch (const std::exception& e) { fail(env, e.what()); return false; }
 }
-extern "C" JNIEXPORT void JNICALL Java_com_sky22333_netboot_data_NativeMedia_buildWindows(JNIEnv* env, jobject, jint input, jint output, jstring directory, jobject callback) {
+extern "C" JNIEXPORT void JNICALL Java_com_sky22333_netboot_data_NativeMedia_buildWindows(JNIEnv* env, jobject, jint input, jint output, jstring directory, jobject callback, jobjectArray names, jlongArray sizes) {
     const char* path = env->GetStringUTFChars(directory, nullptr);
     if (!path) return;
     try {
         auto method = env->GetMethodID(env->GetObjectClass(callback), "onProgress", "(IJJ)Z");
         if (!method) throw std::runtime_error("media_callback_failed");
         Progress progress{env, callback, method};
+        std::vector<Entry> drivers;
+        const auto count = env->GetArrayLength(names);
+        require(env->GetArrayLength(sizes) == count, "drivers_invalid");
+        for (jsize i = 0; i < count; ++i) {
+            auto name = static_cast<jstring>(env->GetObjectArrayElement(names, i));
+            const char* text = env->GetStringUTFChars(name, nullptr);
+            require(text != nullptr, "media_memory_failed");
+            std::string relative(text);
+            env->ReleaseStringUTFChars(name, text);
+            env->DeleteLocalRef(name);
+            jlong bytes = 0;
+            env->GetLongArrayRegion(sizes, i, 1, &bytes);
+            require(bytes >= 0 && static_cast<uint64_t>(bytes) <= FatLimit, "media_file_too_large");
+            require(!relative.empty() && relative.front() != '/' && relative.find("../") == std::string::npos && relative.find_first_of("\\:") == std::string::npos, "drivers_invalid");
+            drivers.push_back({relative, static_cast<uint64_t>(bytes), false});
+        }
         checkWim(wimlib_global_init(0));
-        build(input, output, path, progress);
+        build(input, output, path, progress, FatLimit, drivers);
     } catch (const std::exception& e) { fail(env, e.what()); }
     env->ReleaseStringUTFChars(directory, path);
 }
