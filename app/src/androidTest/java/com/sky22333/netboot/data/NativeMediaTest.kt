@@ -88,12 +88,13 @@ class NativeMediaTest {
                 NativeMedia.buildWindows(input.fd, output.fd, root.path, object : MediaProgress {
                     override fun onProgress(stage: Int, done: Long, total: Long) = true
                     override fun openDriver(index: Int) = ParcelFileDescriptor.open(drivers[index], ParcelFileDescriptor.MODE_READ_ONLY).detachFd()
-                }, drivers.map { "Storage/${it.name}" }.toTypedArray(), drivers.map { it.length() }.toLongArray())
+                }, drivers.map { "Storage Controller/${it.name}" }.toTypedArray(), drivers.map { it.length() }.toLongArray())
             }
         }
         FatReader(image).use { disk ->
             assertEquals("test fixture: setup.exe", disk.read("SETUP.EXE").decodeToString())
-            drivers.forEach { assertArrayEquals(it.readBytes(), disk.read("DRIVERS/STORAGE/${it.name.uppercase()}")) }
+            drivers.forEach { assertArrayEquals(it.readBytes(), disk.read("\$WinPEDriver\$/Storage Controller/${it.name}")) }
+            assertThrows(IOException::class.java) { disk.read("Drivers") }
         }
         assertEquals(sourceHash, IsoRepository.sha256(iso))
     }
@@ -224,13 +225,25 @@ class NativeMediaTest {
             val components = path.split('/')
             for ((index, name) in components.withIndex()) {
                 var entry: ByteBuffer? = null
+                val longName = sortedMapOf<Int, String>()
                 for (offset in directory.indices step 32) {
                     val e = directory.copyOfRange(offset, offset + 32)
                     if (e[0] == 0.toByte()) break
-                    if (e[11] == 15.toByte() || e[0] == 0xe5.toByte()) continue
+                    if (e[0] == 0xe5.toByte()) { longName.clear(); continue }
+                    if (e[11] == 15.toByte()) {
+                        if (e[0].toInt() and 0x40 != 0) longName.clear()
+                        val characters = ByteBuffer.wrap(e).order(ByteOrder.LITTLE_ENDIAN)
+                        longName[e[0].toInt() and 0x1f] = (listOf(1, 3, 5, 7, 9) + (14..24 step 2) + listOf(28, 30))
+                            .map { characters.getChar(it) }.takeWhile { it != '\u0000' && it != '\uffff' }.joinToString("")
+                        continue
+                    }
                     val base = e.copyOfRange(0, 8).decodeToString().trim()
                     val ext = e.copyOfRange(8, 11).decodeToString().trim()
-                    if ((base + if (ext.isEmpty()) "" else ".$ext") == name) { entry = ByteBuffer.wrap(e).order(ByteOrder.LITTLE_ENDIAN); break }
+                    val shortName = base + if (ext.isEmpty()) "" else ".$ext"
+                    if (shortName.equals(name, true) || longName.values.joinToString("").equals(name, true)) {
+                        entry = ByteBuffer.wrap(e).order(ByteOrder.LITTLE_ENDIAN); break
+                    }
+                    longName.clear()
                 }
                 val e = entry ?: throw IOException("missing $path")
                 val cluster = ((e.getShort(20).toInt() and 65535) shl 16) or (e.getShort(26).toInt() and 65535)

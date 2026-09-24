@@ -5,7 +5,7 @@ import java.io.IOException
 /** Shared filename contract for media preparation and the privileged backing-file allowlist. */
 object UsbMediaCache {
     private const val HashPattern = "[a-f0-9]{64}"
-    private const val Version = "v1"
+    private const val Version = "v2"
     private val hash = Regex(HashPattern)
     private val filename = Regex("$HashPattern(?:-$HashPattern)?-$Version\\.img")
 

@@ -24,6 +24,7 @@ extern "C" {
 namespace {
 constexpr uint64_t FatLimit = 0xffffffffULL;
 constexpr size_t BufferSize = 256 * 1024;
+const std::string DriverDirectory = "/$WinPEDriver$";
 std::mutex buildMutex; // FatFs volume registration is global; one preparation at a time.
 int diskFd = -1;
 uint64_t diskBytes = 0;
@@ -266,7 +267,7 @@ void build(int input, int output, const std::string& work, Progress& progress, u
         total += e.size;
     }
     if (!drivers.empty()) {
-        for (const auto& e : entries) require(lower(e.path) != "/drivers", "drivers_directory_exists");
+        for (const auto& e : entries) require(lower(e.path) != lower(DriverDirectory), "drivers_directory_exists");
         for (const auto& e : drivers) total += e.size;
     }
     require(total < 128ULL*1024*1024*1024, "media_file_too_large");
@@ -300,11 +301,11 @@ void build(int input, int output, const std::string& work, Progress& progress, u
     if (!drivers.empty()) {
         const auto openDriver = progress.env->GetMethodID(progress.env->GetObjectClass(progress.callback), "openDriver", "(I)I");
         require(openDriver != nullptr, "media_callback_failed");
-        require(f_mkdir("/Drivers") == FR_OK, "media_write_failed");
+        require(f_mkdir(DriverDirectory.c_str()) == FR_OK, "media_write_failed");
         std::set<std::string> directories;
         for (size_t i = 0; i < drivers.size(); ++i) {
-            const auto path = "/Drivers/" + drivers[i].path;
-            for (size_t slash = path.find('/', 9); slash != std::string::npos; slash = path.find('/', slash + 1)) {
+            const auto path = DriverDirectory + "/" + drivers[i].path;
+            for (size_t slash = path.find('/', DriverDirectory.size() + 1); slash != std::string::npos; slash = path.find('/', slash + 1)) {
                 const auto directory = path.substr(0, slash);
                 if (directories.insert(lower(directory)).second) require(f_mkdir(directory.c_str()) == FR_OK, "media_write_failed");
             }
@@ -329,7 +330,7 @@ void build(int input, int output, const std::string& work, Progress& progress, u
     }
     for (const auto& e : drivers) {
         FILINFO info{};
-        require(f_stat(("/Drivers/" + e.path).c_str(), &info) == FR_OK && info.fsize == e.size, "media_verify_failed");
+        require(f_stat((DriverDirectory + "/" + e.path).c_str(), &info) == FR_OK && info.fsize == e.size, "media_verify_failed");
     }
 }
 void fail(JNIEnv* env, const char* message) {

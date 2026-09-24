@@ -208,7 +208,7 @@
     <string name="log_export_failed">无法写入日志文件</string>
     <string name="empty_source">所选文件为空，请重新选择。</string>
     <string name="usb_drivers">携带驱动</string>
-    <string name="usb_drivers_detail">为 Windows 或 WinPE 添加完整驱动包。启动后从介质的 Drivers 文件夹加载。</string>
+    <string name="usb_drivers_detail">添加完整驱动包，供 Windows 安装程序自动发现，也可手动从 $WinPEDriver$ 文件夹加载。</string>
     <string name="usb_drivers_empty">未添加驱动</string>
     <string name="usb_drivers_zip">选择驱动 ZIP</string>
     <string name="usb_drivers_folder">选择驱动文件夹</string>
@@ -218,6 +218,6 @@
     <string name="drivers_no_inf">未找到 INF 驱动，请选择完整驱动包。</string>
     <string name="drivers_invalid">驱动包无法使用，请检查文件名或重新选择。</string>
     <string name="drivers_missing">驱动文件缺失，请重新添加。</string>
-    <string name="drivers_directory_exists">镜像已包含 Drivers 文件夹，请移除附加驱动或使用原版镜像。</string>
+    <string name="drivers_directory_exists">镜像已包含 $WinPEDriver$ 文件夹，请移除附加驱动或使用原版镜像。</string>
     <string name="drivers_unsupported_image">携带驱动需要可制作的 Windows 或 WinPE 镜像。</string>
 </resources>

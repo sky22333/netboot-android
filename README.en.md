@@ -30,14 +30,8 @@ Do not switch USB modes while USB boot is active. File transfer and USB debuggin
 
 ### Optional: include Windows drivers
 
-Use the image's **Include drivers** icon to choose a ZIP or folder containing the complete INF, SYS, CAT files and their directory structure. This requires a supported Windows installation ISO or official WinPE UDF ISO. Match drivers to the target Windows/WinPE architecture; extract EXE installers first.
-
-- If Setup cannot see the disk, choose **Load driver** and browse the media's `Drivers` folder.
-- In WinPE, run `drvload D:\Drivers\folder\driver.inf` using the actual drive letter. After loading a network driver, run `wpeutil InitializeNetwork`.
-
-Drivers share the same read-only USB disk with the installation files, without requiring network access. Adding drivers requires media preparation; subsequent starts reuse a cache keyed by image and driver contents. Preparation is cancellable, failed replacement preserves the previous drivers, and deleting the image removes its drivers and media caches. Generated media targets UEFI; drivers are not automatically injected into WIM files or installed Windows. Create official WinPE ISOs with Microsoft's ADK / WinPE add-on and import them into the app.
-
-References: [Setup drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/installing-a-boot-start-driver), [Drvload](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/drvload-command-line-options), [Create WinPE media](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe-create-usb-bootable-drive).
+Use the image's **Include drivers** icon to select a ZIP or folder containing a complete INF driver package and add it to the Windows/WinPE USB media, without requiring the computer to be online.
+Windows Setup can discover the drivers automatically, or you can browse the `$WinPEDriver$` folder through **Load driver**; standalone WinPE requires manual loading.
 
 ## Preview
 

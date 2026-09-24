@@ -30,14 +30,8 @@
 
 ### 可选：携带 Windows 驱动
 
-在镜像的「携带驱动」图标中选择 ZIP 或文件夹，保留完整的 INF、SYS、CAT 等文件及目录结构。仅支持可制作的 Windows 安装 ISO 和官方 WinPE UDF ISO；选择与目标 Windows/WinPE 架构匹配的驱动，EXE 安装包需先解压。
-
-- 安装程序看不到硬盘：点击「加载驱动」，浏览启动介质的 `Drivers` 文件夹。
-- WinPE 缺少存储或有线网卡驱动：执行 `drvload D:\Drivers\目录\驱动.inf`，盘符以实际为准；加载网卡驱动后执行 `wpeutil InitializeNetwork`。
-
-驱动与安装文件位于同一个只读 USB 磁盘，不依赖电脑联网。添加驱动会触发介质制作，之后按镜像和驱动内容复用缓存；准备可取消，更换失败保留原驱动，删除镜像同时清理驱动与介质缓存。生成介质面向 UEFI，不会自动把驱动注入 WIM 或已安装的 Windows。官方 WinPE ISO 由用户通过微软 ADK / WinPE 加载项制作并导入。
-
-参考：[安装时加载驱动](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/installing-a-boot-start-driver)、[Drvload](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/drvload-command-line-options)、[创建 WinPE 介质](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe-create-usb-bootable-drive)。
+点击镜像的「携带驱动」图标，选择包含完整 INF 驱动包的 ZIP 或文件夹，即可将驱动加入 Windows／WinPE USB 启动介质，无需电脑联网。
+Windows 安装程序可自动发现，也可通过「加载驱动」浏览 `$WinPEDriver$` 文件夹；独立 WinPE 需手动加载。
 
 ## 预览
 

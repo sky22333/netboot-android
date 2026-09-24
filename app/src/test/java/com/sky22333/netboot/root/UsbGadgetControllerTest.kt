@@ -214,7 +214,7 @@ class UsbGadgetControllerTest {
     @Test fun `prepared driver media attaches read only and can be reused after restore`() {
         val controller = fixture(KernelIo())
         val media = File(managed, "media").apply { mkdir() }
-        val image = File(media, "${"a".repeat(64)}-${"b".repeat(64)}-v1.img")
+        val image = File(media, "${"a".repeat(64)}-${"b".repeat(64)}-v2.img")
         val mbr = java.nio.ByteBuffer.allocate(512).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         mbr.put(450, 0x0c); mbr.putInt(454, 1); mbr.putInt(458, 2047)
         mbr.put(510, 0x55); mbr.put(511, 0xaa.toByte())
@@ -238,7 +238,7 @@ class UsbGadgetControllerTest {
         val media = File(managed, "media").apply { mkdir() }
         for (driver in listOf("", "b".repeat(64))) {
             val name = UsbMediaCache.fileName("A".repeat(64), driver)
-            val expected = "a".repeat(64) + (if (driver.isEmpty()) "" else "-$driver") + "-v1.img"
+            val expected = "a".repeat(64) + (if (driver.isEmpty()) "" else "-$driver") + "-v2.img"
             assertEquals(expected, name)
             val image = File(media, name).apply { writeText("placeholder") }
             assertEquals(image.canonicalFile, UsbGadgetController.validateBackingFile(managed, image))
@@ -249,7 +249,7 @@ class UsbGadgetControllerTest {
         val controller = fixture(KernelIo())
         val media = File(managed, "media").apply { mkdir() }
         val name = UsbMediaCache.fileName("a".repeat(64), "b".repeat(64))
-        for (invalid in listOf("installer.img", "$name.part", name.replace("-v1", "-v2"), name.replace("b".repeat(64), "b".repeat(63)))) {
+        for (invalid in listOf("installer.img", "$name.part", name.replace("-v2", "-v1"), name.replace("b".repeat(64), "b".repeat(63)))) {
             val file = File(media, invalid).apply { writeText("x") }
             assertEquals("not_iso", assertThrows(UsbException::class.java) { controller.attach(file.path, false) }.code)
         }

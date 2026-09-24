@@ -209,7 +209,7 @@
     <string name="log_export_failed">The log file could not be written</string>
     <string name="empty_source">The selected file is empty. Choose another file.</string>
     <string name="usb_drivers">Include drivers</string>
-    <string name="usb_drivers_detail">Add a complete driver package for Windows or WinPE. After booting, load it from the Drivers folder on the media.</string>
+    <string name="usb_drivers_detail">Add a complete driver package for Windows Setup to discover, or load it manually from the $WinPEDriver$ folder.</string>
     <string name="usb_drivers_empty">No drivers added</string>
     <string name="usb_drivers_zip">Choose driver ZIP</string>
     <string name="usb_drivers_folder">Choose driver folder</string>
@@ -219,6 +219,6 @@
     <string name="drivers_no_inf">No INF driver found. Choose a complete driver package.</string>
     <string name="drivers_invalid">Driver package cannot be used. Check its file names or choose another package.</string>
     <string name="drivers_missing">Driver files are missing. Add them again.</string>
-    <string name="drivers_directory_exists">The image already contains a Drivers folder. Remove the added drivers or use an original image.</string>
+    <string name="drivers_directory_exists">The image already contains a $WinPEDriver$ folder. Remove the added drivers or use an original image.</string>
     <string name="drivers_unsupported_image">Including drivers requires a supported Windows or WinPE image.</string>
 </resources>
