@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="local_network_permission_title">局域网权限</string>
+    <string name="local_network_permission_required">启动网络服务需要局域网权限。</string>
+    <string name="open_app_settings">前往设置</string>
     <string name="import_retry_detail">导入未完成。请重新选择源文件重试，或删除此记录。</string>
     <string name="import_again">重新选择源文件</string>
     <string name="import_complete">镜像已导入并完成检查</string>

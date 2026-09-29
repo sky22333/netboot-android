@@ -4,6 +4,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.AppOpsManager
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.BroadcastReceiver
@@ -34,6 +36,9 @@ class RuntimeService : Service() {
     private var pendingCommands = 0
     private var stateObserver: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private val permissionListener = AppOpsManager.OnOpChangedListener { _, _ ->
+        if (!hasLocalNetworkPermission()) scope.launch(Dispatchers.IO) { runtime.enforceNetworkPermission() }
+    }
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             scope.launch { runtime.refreshUsbConnection() }
@@ -42,6 +47,11 @@ class RuntimeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (Build.VERSION.SDK_INT >= 37) {
+            AppOpsManager.permissionToOp(Manifest.permission.ACCESS_LOCAL_NETWORK)?.let { operation ->
+                getSystemService(AppOpsManager::class.java).startWatchingMode(operation, packageName, permissionListener)
+            }
+        }
         ContextCompat.registerReceiver(this, usbReceiver, IntentFilter("android.hardware.usb.action.USB_STATE"), ContextCompat.RECEIVER_EXPORTED)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(ChannelId, getString(R.string.runtime_channel), NotificationManager.IMPORTANCE_LOW),
@@ -79,6 +89,7 @@ class RuntimeService : Service() {
     override fun onDestroy() {
         // Do not block the main thread; broker disconnect triggers USB recovery.
         unregisterReceiver(usbReceiver)
+        if (Build.VERSION.SDK_INT >= 37) getSystemService(AppOpsManager::class.java).stopWatchingMode(permissionListener)
         runtime.shutdownAfterServiceDestroyed()
         releaseWakeLock()
         scope.cancel()

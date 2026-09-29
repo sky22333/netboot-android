@@ -147,6 +147,9 @@ StatusJSON() -> String
 
 iPXE 脚本作为 `config.ipxeScript` 随配置传入；修改配置后需重新启动 PXE 才生效。
 
+Android 层仅在 PXE 会话期间持有 `MulticastLock`，启动失败、停止及断连时释放。
+Android 17 起启动前请求并校验 `ACCESS_LOCAL_NETWORK`；拒绝不启动，撤销时停止 PXE。
+
 - 不跨 JNI 暴露 Go struct / map / channel / context / 文件对象。
 - Listener 只发**事件码 + 结构化参数**，不发成品文本；由 Kotlin 本地化。
 - 高频进度与日志必须合并，禁止每包/每块跨 JNI 回调。

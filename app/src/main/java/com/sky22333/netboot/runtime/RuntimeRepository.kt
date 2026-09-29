@@ -1,6 +1,11 @@
 package com.sky22333.netboot.runtime
 
 import android.content.Context
+import android.Manifest
+import android.os.Build
+import android.net.wifi.WifiManager
+import androidx.core.content.PermissionChecker
+import kotlinx.coroutines.NonCancellable
 import android.net.Uri
 import com.sky22333.netboot.data.DriverRepository
 import android.net.ConnectivityManager
@@ -85,6 +90,9 @@ data class NetworkAdapter(val name: String, val address: String, val prefixLengt
     }
 }
 
+internal fun Context.hasLocalNetworkPermission(): Boolean =
+    Build.VERSION.SDK_INT < 37 || PermissionChecker.checkSelfPermission(this, Manifest.permission.ACCESS_LOCAL_NETWORK) == PermissionChecker.PERMISSION_GRANTED
+
 @Singleton
 class RuntimeRepository @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -97,6 +105,7 @@ class RuntimeRepository @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operationMutex = Mutex()
+    private var multicastLock: WifiManager.MulticastLock? = null
     // Driver imports must not hold up PXE controls.
     private val mediaMutex = Mutex()
     private val eventsSincePrune = AtomicInteger()
@@ -133,13 +142,33 @@ class RuntimeRepository @Inject constructor(
 
     suspend fun startNetwork(profileId: String) = runOperation("start_network") {
         if (mutableState.value.networkRunning) throw BrokerException("network_already_running")
+        check(context.hasLocalNetworkPermission()) { "local_network_permission_required" }
         val profile = database.bootProfileDao().find(profileId) ?: error("profile_not_found")
         val mode = BootMode.fromWireValue(profile.mode) ?: error("unsupported_boot_mode")
         val adapter = interfaces().firstOrNull { it.name == profile.interfaceName && it.address == profile.listenAddress }
             ?: error("network_interface_changed")
         val root = File(context.filesDir, "pxe").apply { mkdirs() }
-        broker.startNetwork(json.encodeToString(profile.toCoreConfig(mode, root, adapter)))
+        // The lock controls Wi-Fi receive filtering, not interface selection or Wi-Fi power.
+        multicastLock = context.getSystemService(WifiManager::class.java)
+            ?.createMulticastLock("netboot:pxe")?.apply { setReferenceCounted(false) }
+        multicastLock?.acquire()
+        try {
+            broker.startNetwork(json.encodeToString(profile.toCoreConfig(mode, root, adapter)))
+        } catch (cancelled: CancellationException) {
+            // A cancelled RPC may already have started the server in the broker.
+            withContext(NonCancellable) { broker.stopNetwork() }
+            throw cancelled
+        }
         mutableState.update { it.copy(networkRunning = true) }
+    }
+
+    suspend fun enforceNetworkPermission() = withOperationLock {
+        if (mutableState.value.networkRunning && !context.hasLocalNetworkPermission()) {
+            performOperation("stop_network") {
+                broker.stopNetwork()
+                mutableState.update { it.copy(networkRunning = false, errorCode = "local_network_permission_required") }
+            }
+        }
     }
 
     suspend fun stopNetwork() = runOperation("stop_network") {
@@ -253,6 +282,7 @@ class RuntimeRepository @Inject constructor(
             block()
         } finally {
             if (!broker.connected.value) invalidateDisconnectedSession()
+            if (!mutableState.value.networkRunning) releaseMulticastLock()
             mutableState.update { it.copy(busy = false) }
         }
     }
@@ -278,7 +308,13 @@ class RuntimeRepository @Inject constructor(
     }
 
     private fun invalidateDisconnectedSession() {
+        releaseMulticastLock()
         mutableState.update(RuntimeState::disconnected)
+    }
+
+    private fun releaseMulticastLock() {
+        multicastLock?.let { if (it.isHeld) it.release() }
+        multicastLock = null
     }
 
     /** Preserve broker error codes for the UI and full failure details for logs. */
@@ -371,6 +407,7 @@ class RuntimeRepository @Inject constructor(
             "broker_start_failed",
             "broker_disconnected",
             "network_interface_changed",
+            "local_network_permission_required",
             "network_already_running",
             "profile_not_found",
             "asset_not_found",

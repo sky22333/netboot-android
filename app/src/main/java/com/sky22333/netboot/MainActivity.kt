@@ -1,6 +1,11 @@
 package com.sky22333.netboot
 
 import android.Manifest
+import android.content.Intent
+import android.provider.Settings
+import androidx.core.net.toUri
+import androidx.compose.ui.platform.LocalContext
+import com.sky22333.netboot.runtime.hasLocalNetworkPermission
 import android.app.Activity
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
@@ -716,6 +721,9 @@ private fun PxeScreen(
     val runtime by viewModel.runtime.collectAsStateWithLifecycle()
     val pxeFiles by viewModel.pxeFiles.collectAsStateWithLifecycle()
     var pendingMode by remember { mutableStateOf<BootMode?>(null) }
+    val context = LocalContext.current
+    var permissionMode by rememberSaveable { mutableStateOf<String?>(null) }
+    var showPermissionDenied by rememberSaveable { mutableStateOf(false) }
     val adapter = form.adapter?.takeIf { it in adapters }
     val adapterIndex = adapters.indexOf(adapter).coerceAtLeast(0)
     val selectedMode = form.mode
@@ -727,11 +735,27 @@ private fun PxeScreen(
         if (uris.isNotEmpty()) viewModel.importPxeFiles(uris)
     }
 
-    fun launchStart(target: BootMode) {
-        if (!configurationValid || runtime.busy) return
+    fun startAuthorized(target: BootMode) {
+        if (!configurationValid || runtime.busy || runtime.networkRunning) return
         val current = adapter
         val selectedPort = portValue ?: return
         viewModel.startNetwork(target, current, selectedPort, form.bootFile, form.script, form.poolStart, form.poolEnd)
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val target = permissionMode?.let(BootMode::fromWireValue)
+        permissionMode = null
+        if (granted && target != null) startAuthorized(target)
+        else if (!granted) showPermissionDenied = true
+    }
+
+    fun launchStart(target: BootMode) {
+        if (permissionMode != null) return
+        if (context.hasLocalNetworkPermission()) startAuthorized(target)
+        else {
+            permissionMode = target.wireValue
+            permissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        }
     }
 
     LazyColumn(
@@ -826,7 +850,7 @@ private fun PxeScreen(
                         }
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !runtime.busy && (runtime.networkRunning || configurationValid),
+                    enabled = permissionMode == null && !runtime.busy && (runtime.networkRunning || configurationValid),
                 ) { Text(stringResource(if (runtime.networkRunning) R.string.stop_pxe else R.string.start_pxe)) }
             }
         }
@@ -834,6 +858,20 @@ private fun PxeScreen(
         item { Text(stringResource(R.string.pxe_files_hint), fontSize = 12.sp) }
     }
 
+    OverlayDialog(
+        show = showPermissionDenied,
+        title = stringResource(R.string.local_network_permission_title),
+        summary = stringResource(R.string.local_network_permission_required),
+        onDismissRequest = { showPermissionDenied = false },
+    ) {
+        ActionRow {
+            CompactButton({ showPermissionDenied = false }, Modifier.weight(1f)) { Text(stringResource(R.string.cancel)) }
+            CompactButton({
+                showPermissionDenied = false
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri()))
+            }, Modifier.weight(1f)) { Text(stringResource(R.string.open_app_settings)) }
+        }
+    }
     OverlayDialog(
         show = pendingMode != null,
         title = stringResource(R.string.full_dhcp_confirm_title),
@@ -1233,6 +1271,7 @@ private fun runtimeErrorText(code: String): String = stringResource(
         "broker_start_failed" -> R.string.runtime_error_broker
         "broker_disconnected" -> R.string.runtime_error_disconnected
         "network_interface_changed" -> R.string.runtime_error_network_changed
+        "local_network_permission_required" -> R.string.local_network_permission_required
         "network_already_running" -> R.string.runtime_error_already_running
         "http_port_unavailable" -> R.string.runtime_error_http_port
         "tftp_port_unavailable" -> R.string.runtime_error_tftp_port
@@ -1293,6 +1332,7 @@ private fun messageResource(code: String): Int = when (code) {
     "image_in_use" -> R.string.image_in_use
     "reserved_file_name" -> R.string.reserved_file_name
     "network_interface_changed" -> R.string.network_interface_changed
+    "local_network_permission_required" -> R.string.local_network_permission_required
     "invalid_ipxe_script" -> R.string.invalid_ipxe_script
     "insufficient_storage" -> R.string.insufficient_storage
     "logs_exported" -> R.string.logs_exported
