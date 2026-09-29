@@ -96,9 +96,8 @@ class PxeFileRepository @Inject constructor(@ApplicationContext private val cont
 
     private fun seedBuiltIns() {
         directory.mkdirs()
-        BuiltIns.forEach { (name, expectedHash) ->
+        BuiltIns.forEach { name ->
             val destination = File(directory, name)
-            if (destination.isFile && IsoRepository.sha256(destination) == expectedHash) return@forEach
             val temporary = File(directory, "$name.builtin")
             context.assets.open("pxe/$name").use { input ->
                 temporary.outputStream().buffered().use { output -> input.copyTo(output, 256 * 1024) }
@@ -115,14 +114,10 @@ class PxeFileRepository @Inject constructor(@ApplicationContext private val cont
     }
 
     private companion object {
-        val BuiltIns = mapOf(
-            "ipxe-arm64.efi" to "a25ec1e57caf215108b92eeb22ccc081a2b3c238019af86e1f47bf2e8d043347",
-            "ipxe-x86_64.efi" to "9767ac1ab11b612c5e97db7a6c5a57267a6378a3eb174752ea5ff4f5974d19d8",
-            "undionly.kpxe" to "f0c1c2f07a15f6a8e987f61ec8835bdc85b5557754348be8fbbdb08af4dfcd30",
-        )
+        val BuiltIns = setOf("ipxe-arm64.efi", "ipxe-x86_64.efi", "undionly.kpxe")
 
         // Reserved scripts come from configuration; allow deletion of older imported copies.
         val ScriptNames = setOf("autoexec.ipxe", "boot.ipxe")
-        val Reserved = BuiltIns.keys + ScriptNames
+        val Reserved = BuiltIns + ScriptNames
     }
 }

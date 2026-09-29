@@ -1,7 +1,10 @@
 #!ipxe
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 600000
-set public-mirror https://mirrors.cernet.edu.cn
+# Official iPXE BIOS builds do not include HTTPS.
+set mirror-protocol https
+iseq ${platform} pcbios && set mirror-protocol http ||
+set public-mirror ${mirror-protocol}://mirrors.cernet.edu.cn
 
 set debian-mirror-host mirrors.cernet.edu.cn
 set debian-mirror-dir /debian
@@ -72,7 +75,7 @@ initrd ${alpine-base}/initramfs-lts
 boot || goto failed
 
 :public_netbootxyz
-chain --autofree https://boot.netboot.xyz || chain --autofree http://boot.netboot.xyz || goto failed
+chain --autofree ${mirror-protocol}://boot.netboot.xyz || goto failed
 goto main_menu
 
 :show_info
