@@ -18,7 +18,8 @@ iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${platform}
 item --gap -- OS Installation
 item public_debian Debian 13 (Trixie) Stable Install
-item public_alpine Alpine Linux v3.23 Lightweight Install
+item public_alpine Alpine Linux v3.23 Standard Install (LTS)
+item public_alpine_virt Alpine Linux v3.23 VPS Install (Low RAM)
 item public_netbootxyz netboot.xyz Multi-distro Boot Menu
 item --gap -- Tools
 item show_info Show Boot Information
@@ -52,26 +53,36 @@ kernel ${debian-base}/linux \
     keymap=us \
     hostname=debian \
     domain= \
-    passwd/root-login=false \
-    passwd/make-user=true \
+    passwd/root-login=true \
+    passwd/make-user=false \
     partman-auto/method=regular \
     partman-auto/choose_recipe=atomic \
     pkgsel/run_tasksel=false \
     pkgsel/include=openssh-server,curl,wget,vim,sudo \
     pkgsel/upgrade=none \
     popularity-contest/participate=false \
-    openssh-server/password-auth=true
+    openssh-server:openssh-server/permit-root-login=false \
+    openssh-server:openssh-server/password-authentication=true
 
 initrd ${debian-base}/initrd.gz
 boot || goto failed
 
 :public_alpine
-echo Starting Alpine Linux installer...
+echo Starting Alpine Linux standard installer (LTS)...
 echo arch=${alpine_arch} mode=${platform}
 imgfree
 set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
 kernel ${alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-lts
 initrd ${alpine-base}/initramfs-lts
+boot || goto failed
+
+:public_alpine_virt
+echo Starting Alpine Linux VPS installer (Low RAM)...
+echo arch=${alpine_arch} mode=${platform}
+imgfree
+set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
+kernel ${alpine-base}/vmlinuz-virt initrd=initramfs-virt ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-virt
+initrd ${alpine-base}/initramfs-virt
 boot || goto failed
 
 :public_netbootxyz
