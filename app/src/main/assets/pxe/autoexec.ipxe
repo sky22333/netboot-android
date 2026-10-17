@@ -58,7 +58,7 @@ kernel ${debian-base}/linux \
     partman-auto/method=regular \
     partman-auto/choose_recipe=atomic \
     pkgsel/run_tasksel=false \
-    pkgsel/include=openssh-server,curl,wget,vim,sudo \
+    pkgsel/include=openssh-server,curl,wget,sudo \
     pkgsel/upgrade=none \
     popularity-contest/participate=false \
     openssh-server:openssh-server/permit-root-login=false \
