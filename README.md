@@ -7,6 +7,8 @@
 
 ## 使用前提
 
+> 临时root工具 [GhostLock-App](https://github.com/YuKongA/ghostlock-app/blob/main/README_ZH.md) ， [DirtyFrag](https://github.com/mitschud/DirtyFrag)
+
 - Android 8.0 及以上，已在 Root 管理器中授权本应用使用 `su`。应用启动时自动检测现有权限，不安装或修补 Root。
 - PXE：手机和电脑接入同一局域网，网络允许设备互访；电脑支持网络启动。
 - USB：使用数据线连接电脑；手机内核和 USB 配置需支持添加存储功能。
@@ -41,19 +43,6 @@ Windows 安装程序可自动发现，也可通过「加载驱动」浏览 `$Win
 <img src=".github/image/demo3.jpg" alt="demo2" width="230">
 </div>
 
-## 构建与发布
+---
 
-使用与 CI 一致的 JDK 25、Android SDK 37、NDK 28.2.13676358 和 Go 1.27.1；
-JVM 编译目标为 17，Gradle 由项目 Wrapper 固定。
-
-```bash
-./gradlew testDebugUnitTest lintRelease
-./gradlew assembleRelease -PnetbootVersionName=1.0.0
-# 仅在需要模拟器 ABI 时
-./gradlew assembleDebug -PnetbootAbis=arm64-v8a,armeabi-v7a,x86_64
-# 需要已连接的专用测试设备
-./gradlew connectedDebugAndroidTest
-```
-
-
-开发规范与测试要求见 [AGENTS.md](AGENTS.md)，第三方来源和许可见 [NOTICES.md](NOTICES.md)。
+开发规范见 [AGENTS.md](AGENTS.md)，第三方许可见 [NOTICES.md](NOTICES.md)。
